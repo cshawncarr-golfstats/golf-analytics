@@ -1,11 +1,4 @@
-import os
-
-# Build Golf_Analytics_Studio_v3 (index.html) with:
-# 1. Empty STARTER_ROUNDS = [] (zero personal rounds embedded for safe public GitHub hosting)
-# 2. Round vs. Historical Baseline Comparison Panel (Latest/Selected Round vs All Prior Rounds, Last 5 Prior Rounds, or Same Course Prior Rounds)
-# 3. Traditional GIR %, Up & Down %, Scoring Distribution, Gross Scoring Trend, Par 3/4/5 breakdown, SQL console, Round Log
-
-html_v3 = """<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
@@ -84,7 +77,6 @@ html_v3 = """<!DOCTYPE html>
   .btn-danger:hover { background: rgba(244, 63, 94, 0.15); }
   input[type="file"] { display: none; }
 
-  /* Dropzone Banner */
   .dropzone {
     border: 2px dashed var(--border);
     border-radius: 12px;
@@ -102,7 +94,6 @@ html_v3 = """<!DOCTYPE html>
   .dropzone-text { font-size: 0.88rem; color: var(--text-muted); }
   .dropzone-text strong { color: var(--text); }
 
-  /* Filter Bar */
   .filters {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -134,7 +125,6 @@ html_v3 = """<!DOCTYPE html>
   }
   select:focus, input:focus, textarea:focus { border-color: var(--accent); }
 
-  /* KPI Grid */
   .kpi-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
@@ -157,7 +147,6 @@ html_v3 = """<!DOCTYPE html>
   .highlight-purple { color: var(--purple); }
   .highlight-cyan { color: var(--cyan); }
 
-  /* Scoring Breakdown Strip */
   .scoring-strip {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
@@ -186,7 +175,6 @@ html_v3 = """<!DOCTYPE html>
   .score-box-val { font-size: 1.55rem; font-weight: 700; margin: 4px 0 2px; }
   .score-box-sub { font-size: 0.76rem; color: var(--text-muted); }
 
-  /* Panels & Charts Grid */
   .panel {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -211,7 +199,6 @@ html_v3 = """<!DOCTYPE html>
   }
   .chart-wrap { position: relative; height: 260px; width: 100%; }
 
-  /* Round vs. Historical Baseline Panel */
   .compare-section { margin-bottom: 24px; }
   .compare-controls {
     display: flex;
@@ -260,7 +247,6 @@ html_v3 = """<!DOCTYPE html>
   .delta-bad { background: rgba(244, 63, 94, 0.18); color: var(--rose); }
   .delta-neutral { background: rgba(148, 163, 184, 0.15); color: var(--text-muted); }
 
-  /* SQL Query Console */
   .sql-section { margin-bottom: 24px; }
   .sql-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
   .preset-chip {
@@ -277,7 +263,6 @@ html_v3 = """<!DOCTYPE html>
   .sql-box textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; min-height: 68px; resize: vertical; }
   .sql-results { margin-top: 14px; overflow-x: auto; max-height: 320px; }
 
-  /* Tables */
   table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
   th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--border); white-space: nowrap; }
   th { color: var(--text-muted); font-weight: 600; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(15, 23, 42, 0.55); position: sticky; top: 0; }
@@ -289,7 +274,6 @@ html_v3 = """<!DOCTYPE html>
   .pill-rose { background: rgba(244, 63, 94, 0.18); color: var(--rose); }
   .pill-purple { background: rgba(167, 139, 250, 0.18); color: var(--purple); }
 
-  /* Modal for Hole-by-Hole Scorecard */
   .modal-backdrop {
     display: none;
     position: fixed;
@@ -341,7 +325,6 @@ html_v3 = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- Global Filters -->
   <div class="filters">
     <div class="filter-group">
       <label>Round Length Rule</label>
@@ -384,7 +367,6 @@ html_v3 = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- Round vs. Historical Baseline Comparison Panel -->
   <div class="panel compare-section" id="compareSection">
     <div class="panel-header">
       <div>
@@ -403,13 +385,9 @@ html_v3 = """<!DOCTYPE html>
     <div class="compare-grid" id="compareGrid"></div>
   </div>
 
-  <!-- Core Performance KPI Grid -->
   <div class="kpi-grid" id="kpiGrid"></div>
-
-  <!-- Scoring Breakdown Strip: Albatross -> Double Bogey+ -->
   <div class="scoring-strip" id="scoringStrip"></div>
 
-  <!-- Charts -->
   <div class="charts-grid">
     <div class="panel">
       <div class="panel-header">
@@ -449,7 +427,6 @@ html_v3 = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- Custom SQL Query Engine -->
   <div class="panel sql-section">
     <div class="panel-header">
       <div>
@@ -471,7 +448,6 @@ html_v3 = """<!DOCTYPE html>
     <div class="sql-results" id="sqlResults"></div>
   </div>
 
-  <!-- Round Log Table -->
   <div class="panel">
     <div class="panel-header">
       <div>
@@ -508,7 +484,6 @@ html_v3 = """<!DOCTYPE html>
   </div>
 </div>
 
-<!-- Hole-by-Hole Modal -->
 <div class="modal-backdrop" id="roundModal">
   <div class="modal">
     <div class="panel-header">
@@ -542,14 +517,12 @@ html_v3 = """<!DOCTYPE html>
 </div>
 
 <script>
-// Empty starter dataset so this file is 100% safe to host on a public GitHub Pages repo
 const STARTER_ROUNDS = [];
 const STORAGE_KEY = 'golf_analytics_studio_rounds_v1';
 
 let allRounds = [];
 let charts = {};
 
-// --- Pure JS Garmin .FIT Binary Parser ---
 const FIT_EPOCH_MS = Date.UTC(1989, 11, 31, 0, 0, 0);
 const BASE_TYPES = {
   0x00: ['u8', 1, 0xFF], 0x01: ['i8', 1, 0x7F], 0x02: ['u8', 1, 0xFF],
@@ -600,7 +573,7 @@ function parseFitBuffer(arrayBuffer, fileName) {
     }
 
     if (isDef) {
-      pos++; // reserved
+      pos++;
       const arch = view.getUint8(pos++);
       const le = arch === 0;
       const gNum = view.getUint16(pos, le); pos += 2;
@@ -674,7 +647,6 @@ function parseFitBuffer(arrayBuffer, fileName) {
       else if (f6 === 1) fir = 'RIGHT';
     }
 
-    // Traditional GIR: reaching the green putting for birdie, eagle, or better (strokes - putts <= par - 2)
     let stdGir = false;
     if (strokes !== null && putts !== null) {
       if (putts > 0 && (strokes - putts) <= (par - 2)) stdGir = true;
@@ -706,7 +678,6 @@ function parseFitBuffer(arrayBuffer, fileName) {
   };
 }
 
-// --- Storage & State Management ---
 function normalizeRound(r) {
   const holes = (r.holes || []).map(h => {
     let stdGir = false;
@@ -788,7 +759,6 @@ async function handleFiles(fileList) {
   updateStatus(`<strong>Import Complete:</strong> Added <strong>${added}</strong> new round(s)${skipped ? ` (${skipped} duplicate(s) skipped)` : ''}. Total stored: <strong>${allRounds.length}</strong> rounds.`);
 }
 
-// --- Enrich Round Stats ---
 function enrichRound(r) {
   const girCount = r.holes.filter(h => h.stdGir).length;
   const puttsKnown = r.holes.filter(h => h.putts !== null && h.putts !== undefined);
@@ -815,7 +785,6 @@ function enrichRound(r) {
     else dblPlus++;
   });
 
-  // Par 3, 4, 5 scoring averages over par for the round
   const parAvg = {};
   [3, 4, 5].forEach(p => {
     const sub = r.holes.filter(h => h.par === p && h.strokes !== null && h.strokes !== undefined);
@@ -847,7 +816,6 @@ function enrichRound(r) {
   };
 }
 
-// --- Filtering & Metrics Computation ---
 function populateCourseFilter() {
   const sel = document.getElementById('courseFilter');
   const current = sel.value;
@@ -906,7 +874,6 @@ function refreshDashboard() {
   runCurrentSql();
 }
 
-// --- Round vs. Historical Baseline Comparison ---
 function populateCompareSelector(rounds) {
   const sel = document.getElementById('compareRoundSelect');
   const prevVal = sel.value;
@@ -938,7 +905,6 @@ function renderComparisonPanel(rounds) {
   const baselineMode = document.getElementById('compareBaselineSelect').value;
   const target = rounds.find(r => r.id === targetId) || rounds[rounds.length - 1];
 
-  // Prior rounds in chronological order before the selected round (or all other rounds if earliest is selected)
   const sortedAsc = [...rounds].sort((a, b) => a.date.localeCompare(b.date));
   const targetIdx = sortedAsc.findIndex(r => r.id === target.id);
   let pool = sortedAsc.slice(0, targetIdx);
@@ -1066,7 +1032,7 @@ function renderKPIs(rounds, holes) {
     <div class="kpi-card">
       <div class="kpi-label">Greens in Regulation (GIR %)</div>
       <div class="kpi-value highlight-green">${girPct}%</div>
-      <div class="kpi-sub"><strong>${girs}}</strong> / ${holes.length} holes (${avgGirsPerRound} per round)</div>
+      <div class="kpi-sub"><strong>${girs}</strong> / ${holes.length} holes (${avgGirsPerRound} per round)</div>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">Up &amp; Down % (Scrambling)</div>
@@ -1129,7 +1095,6 @@ function renderCharts(rounds, holes) {
 
   const labels = rounds.map(r => `${r.date.slice(5)} ${r.course.split(' ')[0]}`);
 
-  // 1. Traditional GIR % Only
   charts.gir = new Chart(document.getElementById('girChart'), {
     type: 'bar',
     data: {
@@ -1148,7 +1113,6 @@ function renderCharts(rounds, holes) {
     }
   });
 
-  // 2. Gross Score Only
   charts.score = new Chart(document.getElementById('scoreChart'), {
     type: 'line',
     data: {
@@ -1167,7 +1131,6 @@ function renderCharts(rounds, holes) {
     }
   });
 
-  // 3. Par 3 / 4 / 5 Breakdown
   const pars = [3, 4, 5];
   const parToPar = pars.map(p => {
     const sub = holes.filter(h => h.par === p && h.strokes !== null && h.strokes !== undefined);
@@ -1198,7 +1161,6 @@ function renderCharts(rounds, holes) {
     }
   });
 
-  // 4. Tee Shot Dispersion
   const outcomes = ['HIT', 'LEFT', 'RIGHT'];
   const outcomeCounts = outcomes.map(o => holes.filter(h => h.par >= 4 && h.fir === o).length);
   const outcomeToPar = outcomes.map(o => {
@@ -1289,7 +1251,6 @@ function openRoundModal(roundId) {
   document.getElementById('roundModal').classList.add('open');
 }
 
-// --- SQL Engine (AlaSQL) ---
 function syncSqlTables(rounds, holes) {
   alasql('DROP TABLE IF EXISTS rounds');
   alasql('DROP TABLE IF EXISTS holes');
@@ -1323,7 +1284,6 @@ function runCurrentSql() {
   }
 }
 
-// --- Event Wiring ---
 document.getElementById('fitInput').addEventListener('change', e => handleFiles(e.target.files));
 
 const dropzone = document.getElementById('dropzone');
@@ -1379,16 +1339,9 @@ document.getElementById('roundModal').addEventListener('click', e => {
   if (e.target.id === 'roundModal') document.getElementById('roundModal').classList.remove('open');
 });
 
-// Boot
 loadInitialData();
 populateCourseFilter();
 refreshDashboard();
 </script>
 </body>
 </html>
-"""
-
-with open("index.html", "w", encoding="utf-8") as f:
-    f.write(html_v3)
-
-print("Generated index.html successfully. Size:", len(html_v3), "bytes")

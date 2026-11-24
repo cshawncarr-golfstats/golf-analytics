@@ -559,4 +559,1033 @@
       <label>Fine-Grained Personal Access Token (Stored Locally on This Device Only)</label>
       <input type="password" id="syncTokenInput" placeholder="github_pat_..." />
     </div>
-    <div style="display:flex; flex-wrap:wrap
+    <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:16px;">
+      <button id="saveAndSyncBtn" class="btn-primary">🔄 Save &amp; Sync Now</button>
+      <button id="forcePushBtn">⬆️ Push Local to Cloud</button>
+      <button id="disconnectSyncBtn" class="btn-danger">Disconnect</button>
+    </div>
+    <div class="sync-msg" id="syncModalStatus">
+      Paste your <code>github_pat_...</code> token once on each device. New imports auto-push to GitHub, and opening the app auto-pulls the latest rounds.
+    </div>
+  </div>
+</div>
+
+<script>
+const STARTER_ROUNDS = [];
+const STORAGE_KEY = 'golf_analytics_studio_rounds_v1';
+const SYNC_CFG_KEY = 'golf_analytics_github_sync_v1';
+const DEFAULT_REPO = 'cshawncarr-golfstats/golf-data';
+const DATA_PATH = 'rounds.json';
+
+let allRounds = [];
+let charts = {};
+
+// --- Pure JS Garmin .FIT Binary Parser ---
+const FIT_EPOCH_MS = Date.UTC(1989, 11, 31, 0, 0, 0);
+const BASE_TYPES = {
+  0x00: ['u8', 1, 0xFF], 0x01: ['i8', 1, 0x7F], 0x02: ['u8', 1, 0xFF],
+  0x83: ['i16', 2, 0x7FFF], 0x84: ['u16', 2, 0xFFFF], 0x85: ['i32', 4, 0x7FFFFFFF],
+  0x86: ['u32', 4, 0xFFFFFFFF], 0x07: ['str', 1, 0], 0x88: ['f32', 4, null],
+  0x89: ['f64', 8, null], 0x0A: ['u8', 1, 0x00], 0x8B: ['u16', 2, 0x0000],
+  0x8C: ['u32', 4, 0x00000000], 0x0D: ['u8', 1, 0xFF]
+};
+
+function readFieldVal(view, offset, typeCode, littleEndian) {
+  const spec = BASE_TYPES[typeCode];
+  if (!spec) return null;
+  const [kind, , invalid] = spec;
+  let val = null;
+  if (kind === 'u8') val = view.getUint8(offset);
+  else if (kind === 'i8') val = view.getInt8(offset);
+  else if (kind === 'u16') val = view.getUint16(offset, littleEndian);
+  else if (kind === 'i16') val = view.getInt16(offset, littleEndian);
+  else if (kind === 'u32') val = view.getUint32(offset, littleEndian);
+  else if (kind === 'i32') val = view.getInt32(offset, littleEndian);
+  else if (kind === 'f32') val = view.getFloat32(offset, littleEndian);
+  else if (kind === 'f64') val = view.getFloat64(offset, littleEndian);
+  if (invalid !== null && val === invalid) return null;
+  return val;
+}
+
+function parseFitBuffer(arrayBuffer, fileName) {
+  const view = new DataView(arrayBuffer);
+  const bytes = new Uint8Array(arrayBuffer);
+  if (bytes.length < 14) return null;
+  const headerSize = view.getUint8(0);
+  const dataSize = view.getUint32(4, true);
+  let pos = headerSize;
+  const end = Math.min(bytes.length, headerSize + dataSize);
+  const localDefs = {};
+  let m190 = null, m191 = null;
+  const m192 = [], m193 = [];
+
+  while (pos < end) {
+    const hdr = view.getUint8(pos++);
+    let isDef = false, hasDev = false, localNum = 0;
+    if (hdr & 0x80) {
+      localNum = (hdr >> 5) & 0x03;
+    } else {
+      isDef = Boolean(hdr & 0x40);
+      hasDev = Boolean(hdr & 0x20);
+      localNum = hdr & 0x0F;
+    }
+
+    if (isDef) {
+      pos++;
+      const arch = view.getUint8(pos++);
+      const le = arch === 0;
+      const gNum = view.getUint16(pos, le); pos += 2;
+      const numFields = view.getUint8(pos++);
+      const fields = [];
+      for (let i = 0; i < numFields; i++) {
+        fields.push([view.getUint8(pos), view.getUint8(pos + 1), view.getUint8(pos + 2)]);
+        pos += 3;
+      }
+      let devBytes = 0;
+      if (hasDev) {
+        const numDev = view.getUint8(pos++);
+        for (let i = 0; i < numDev; i++) {
+          devBytes += view.getUint8(pos + 1);
+          pos += 3;
+        }
+      }
+      localDefs[localNum] = { le, gNum, fields, devBytes };
+    } else {
+      const def = localDefs[localNum];
+      if (!def) break;
+      const msg = {};
+      for (const [fNum, fSize, fType] of def.fields) {
+        if (fType === 0x07) {
+          let endStr = pos;
+          while (endStr < pos + fSize && bytes[endStr] !== 0) endStr++;
+          const str = new TextDecoder('utf-8').decode(bytes.subarray(pos, endStr));
+          if (str) msg[fNum] = str;
+        } else {
+          const spec = BASE_TYPES[fType];
+          if (spec && fSize === spec[1]) {
+            const v = readFieldVal(view, pos, fType, def.le);
+            if (v !== null) msg[fNum] = v;
+          }
+        }
+        pos += fSize;
+      }
+      pos += def.devBytes;
+      if (def.gNum === 190) m190 = msg;
+      else if (def.gNum === 191) m191 = msg;
+      else if (def.gNum === 192) m192.push(msg);
+      else if (def.gNum === 193) m193.push(msg);
+    }
+  }
+
+  if (!m190 || !m191 || m192.length === 0) return null;
+  const startTs = m190[3] || m190[253] || 0;
+  const dt = new Date(FIT_EPOCH_MS + startTs * 1000);
+  const dateStr = dt.toISOString().slice(0, 10);
+  const timeStr = dt.toISOString().slice(11, 16);
+
+  const infoMap = {};
+  m193.forEach(h => { if (h[0] !== undefined) infoMap[h[0]] = h; });
+
+  const holes = m192.map((hs, idx) => {
+    const hNum = hs[1] !== undefined ? hs[1] : idx + 1;
+    const hi = infoMap[hNum] || {};
+    const par = hi[2] || 4;
+    const si = hi[3] || null;
+    const distCm = hi[1] || null;
+    const yards = distCm ? Math.round(distCm * 0.010936133) : null;
+    const strokes = hs[2] !== undefined ? hs[2] : null;
+    const putts = hs[5] !== undefined ? hs[5] : null;
+    const f6 = hs[6];
+    const penalties = hs[9] || 0;
+
+    let fir = 'NA';
+    if (par >= 4) {
+      if (f6 === 2) fir = 'HIT';
+      else if (f6 === 0) fir = 'LEFT';
+      else if (f6 === 1) fir = 'RIGHT';
+    }
+
+    let stdGir = false;
+    if (strokes !== null && putts !== null) {
+      if (putts > 0 && (strokes - putts) <= (par - 2)) stdGir = true;
+      else if (putts === 0 && strokes <= (par - 2)) stdGir = true;
+    }
+
+    return { hole: hNum, par, si, yards, strokes, putts, fir, penalties, stdGir };
+  });
+
+  const rawId = fileName.replace(/^.*RAWDATA-/, '').replace(/\.fit$/i, '') || `${dateStr}_${m190[1]}`;
+  return {
+    id: rawId,
+    fileName,
+    date: dateStr,
+    time: timeStr,
+    course: m190[1] || 'Unknown Course',
+    tee: m190[11] || 'Standard',
+    courseRating: m190[21] ? Number(m190[21].toFixed(1)) : null,
+    slopeRating: m190[12] || null,
+    par: m190[10] || holes.reduce((a, b) => a + b.par, 0),
+    holesCount: holes.length,
+    gross: m191[4] || holes.reduce((a, b) => a + (b.strokes || 0), 0),
+    outScore: m191[2] || null,
+    inScore: m191[3] || null,
+    garminFir: m191[7] !== undefined ? m191[7] : null,
+    garminGir: m191[8] !== undefined ? m191[8] : null,
+    garminPutts: m191[9] !== undefined ? m191[9] : null,
+    holes
+  };
+}
+
+// --- Storage & State Management ---
+function normalizeRound(r) {
+  const holes = (r.holes || []).map(h => {
+    let stdGir = false;
+    if (h.strokes !== null && h.strokes !== undefined && h.putts !== null && h.putts !== undefined) {
+      if (h.putts > 0 && (h.strokes - h.putts) <= (h.par - 2)) stdGir = true;
+      else if (h.putts === 0 && h.strokes <= (h.par - 2)) stdGir = true;
+    }
+    return { ...h, stdGir };
+  });
+  return { ...r, holes };
+}
+
+function loadInitialData() {
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        allRounds = parsed.map(normalizeRound);
+        allRounds.sort((a, b) => a.date.localeCompare(b.date));
+        updateStatus(`<strong>Active Dataset:</strong> ${allRounds.length} rounds loaded.`);
+        return;
+      }
+    } catch (e) {}
+  }
+  allRounds = STARTER_ROUNDS.map(normalizeRound);
+  updateStatus(`<strong>Ready:</strong> 0 rounds locally. Import <code>.fit</code>/<code>.json</code> or connect <strong>Cloud Sync</strong>.`);
+}
+
+function saveData() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(allRounds));
+}
+
+function updateStatus(html) {
+  document.getElementById('dataStatusText').innerHTML = html;
+}
+
+function updateCloudStatus(html, isConnected = null) {
+  document.getElementById('cloudStatusText').innerHTML = html;
+  const btn = document.getElementById('syncSettingsBtn');
+  if (isConnected === true) {
+    btn.classList.add('connected');
+    btn.textContent = '☁️ Synced';
+  } else if (isConnected === false) {
+    btn.classList.remove('connected');
+    btn.textContent = '☁️ Cloud Sync';
+  }
+}
+
+// --- GitHub Private Repo Sync Engine ---
+function getSyncConfig() {
+  try {
+    const raw = localStorage.getItem(SYNC_CFG_KEY);
+    if (raw) {
+      const cfg = JSON.parse(raw);
+      return { repo: cfg.repo || DEFAULT_REPO, token: cfg.token || '' };
+    }
+  } catch (e) {}
+  return { repo: DEFAULT_REPO, token: '' };
+}
+
+function saveSyncConfig(repo, token) {
+  localStorage.setItem(SYNC_CFG_KEY, JSON.stringify({ repo: repo.trim(), token: token.trim() }));
+}
+
+function utf8ToBase64(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+function base64ToUtf8(b64) {
+  const bin = atob(b64.replace(/\s/g, ''));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+async function fetchRemoteRounds(cfg) {
+  const url = `https://api.github.com/repos/${cfg.repo}/contents/${DATA_PATH}?t=${Date.now()}`;
+  const res = await fetch(url, {
+    headers: {
+      'Authorization': `Bearer ${cfg.token}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28'
+    }
+  });
+  if (res.status === 404) {
+    return { exists: false, sha: null, rounds: [] };
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `GitHub HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  const decoded = base64ToUtf8(data.content || '');
+  const parsed = JSON.parse(decoded);
+  const arr = Array.isArray(parsed) ? parsed : (parsed.rounds || []);
+  return { exists: true, sha: data.sha, rounds: arr };
+}
+
+async function pushRemoteRounds(cfg, roundsArr, sha) {
+  const url = `https://api.github.com/repos/${cfg.repo}/contents/${DATA_PATH}`;
+  const payload = {
+    message: `Sync ${roundsArr.length} golf rounds (${new Date().toISOString().slice(0, 16)}Z)`,
+    content: utf8ToBase64(JSON.stringify(roundsArr, null, 2))
+  };
+  if (sha) payload.sha = sha;
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${cfg.token}`,
+      'Accept': 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      'X-GitHub-Api-Version': '2022-11-28'
+    },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `GitHub Push HTTP ${res.status}`);
+  }
+  return await res.json();
+}
+
+async function syncWithGitHub({ pushOnly = false, silent = false } = {}) {
+  const cfg = getSyncConfig();
+  if (!cfg.token) {
+    updateCloudStatus('☁️ <strong>Cloud Sync:</strong> Click <strong>Cloud Sync</strong> above to connect your private <code>golf-data</code> repo.', false);
+    return;
+  }
+
+  const modalMsg = document.getElementById('syncModalStatus');
+  if (!silent && modalMsg) modalMsg.textContent = 'Connecting to GitHub...';
+  updateCloudStatus('☁️ <strong>Cloud Sync:</strong> Syncing with GitHub...', true);
+
+  try {
+    const remote = await fetchRemoteRounds(cfg);
+    if (pushOnly) {
+      await pushRemoteRounds(cfg, allRounds, remote.sha);
+      const msg = `Pushed ${allRounds.length} rounds to ${cfg.repo}.`;
+      if (modalMsg) modalMsg.textContent = `✓ ${msg}`;
+      updateCloudStatus(`☁️ <strong>Cloud Synced:</strong> ${allRounds.length} rounds backed up in <code>${cfg.repo}</code>.`, true);
+      return;
+    }
+
+    // Two-way union merge by round ID
+    const mergedMap = new Map();
+    remote.rounds.forEach(r => { if (r && r.id) mergedMap.set(r.id, normalizeRound(r)); });
+    let localHadNewer = !remote.exists;
+    allRounds.forEach(r => {
+      if (r && r.id && !mergedMap.has(r.id)) {
+        mergedMap.set(r.id, normalizeRound(r));
+        localHadNewer = true;
+      }
+    });
+
+    const merged = Array.from(mergedMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+    const pulledCount = merged.length - allRounds.length;
+    allRounds = merged;
+    saveData();
+    populateCourseFilter();
+    refreshDashboard();
+    updateStatus(`<strong>Active Dataset:</strong> ${allRounds.length} rounds loaded.`);
+
+    if (localHadNewer) {
+      await pushRemoteRounds(cfg, allRounds, remote.sha);
+    }
+
+    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const summary = pulledCount > 0
+      ? `Pulled ${pulledCount} new round(s) from cloud (${allRounds.length} total) at ${nowStr}.`
+      : `Up to date with ${cfg.repo} (${allRounds.length} rounds) at ${nowStr}.`;
+    if (modalMsg) modalMsg.textContent = `✓ ${summary}`;
+    updateCloudStatus(`☁️ <strong>Cloud Synced:</strong> ${summary}`, true);
+  } catch (err) {
+    const errText = `Sync error: ${err.message}`;
+    if (modalMsg) modalMsg.textContent = `✕ ${errText}`;
+    updateCloudStatus(`☁️ <strong>Sync Error:</strong> ${err.message} (Check token in <strong>Cloud Sync</strong>)`, false);
+  }
+}
+
+async function handleFiles(fileList) {
+  const files = Array.from(fileList);
+  if (!files.length) return;
+  const existingIds = new Set(allRounds.map(r => r.id));
+  let added = 0, skipped = 0;
+
+  for (const file of files) {
+    if (file.name.toLowerCase().endsWith('.fit')) {
+      const buf = await file.arrayBuffer();
+      const round = parseFitBuffer(buf, file.name);
+      if (round) {
+        if (!existingIds.has(round.id)) {
+          allRounds.push(normalizeRound(round));
+          existingIds.add(round.id);
+          added++;
+        } else {
+          skipped++;
+        }
+      }
+    } else if (file.name.toLowerCase().endsWith('.json')) {
+      try {
+        const txt = await file.text();
+        const parsed = JSON.parse(txt);
+        const arr = Array.isArray(parsed) ? parsed : (parsed.rounds || []);
+        for (const r of arr) {
+          if (r && r.holes && !existingIds.has(r.id)) {
+            allRounds.push(normalizeRound(r));
+            existingIds.add(r.id);
+            added++;
+          } else if (r && r.holes) {
+            skipped++;
+          }
+        }
+      } catch (e) {}
+    }
+  }
+
+  allRounds.sort((a, b) => a.date.localeCompare(b.date));
+  saveData();
+  populateCourseFilter();
+  refreshDashboard();
+  updateStatus(`<strong>Import Complete:</strong> Added <strong>${added}</strong> new round(s)${skipped ? ` (${skipped} duplicate(s) skipped)` : ''}. Total stored: <strong>${allRounds.length}</strong> rounds.`);
+
+  if (added > 0 && getSyncConfig().token) {
+    await syncWithGitHub({ silent: true });
+  }
+}
+
+// --- Enrich Round Stats ---
+function enrichRound(r) {
+  const girCount = r.holes.filter(h => h.stdGir).length;
+  const puttsKnown = r.holes.filter(h => h.putts !== null && h.putts !== undefined);
+  const totalPutts = puttsKnown.reduce((s, h) => s + h.putts, 0);
+
+  const missedGirHoles = r.holes.filter(h => !h.stdGir && h.strokes !== null && h.strokes !== undefined);
+  const upAndDownMade = missedGirHoles.filter(h => h.strokes <= h.par).length;
+  const upAndDownOpps = missedGirHoles.length;
+  const upAndDownPct = upAndDownOpps ? Number(((upAndDownMade / upAndDownOpps) * 100).toFixed(1)) : 0;
+
+  const firOpps = r.holes.filter(h => h.par >= 4 && h.fir !== 'NA');
+  const firHits = firOpps.filter(h => h.fir === 'HIT').length;
+  const firPct = firOpps.length ? Number(((firHits / firOpps.length) * 100).toFixed(1)) : null;
+
+  let albatross = 0, eagles = 0, birdies = 0, pars = 0, bogeys = 0, dblPlus = 0;
+  r.holes.forEach(h => {
+    if (h.strokes === null || h.strokes === undefined) return;
+    const diff = h.strokes - h.par;
+    if (diff <= -3) albatross++;
+    else if (diff === -2) eagles++;
+    else if (diff === -1) birdies++;
+    else if (diff === 0) pars++;
+    else if (diff === 1) bogeys++;
+    else dblPlus++;
+  });
+
+  const parAvg = {};
+  [3, 4, 5].forEach(p => {
+    const sub = r.holes.filter(h => h.par === p && h.strokes !== null && h.strokes !== undefined);
+    parAvg[p] = sub.length ? sub.reduce((s, h) => s + (h.strokes - h.par), 0) / sub.length : null;
+  });
+
+  return {
+    ...r,
+    toPar: r.gross - r.par,
+    girCount,
+    girPct: Number(((girCount / r.holesCount) * 100).toFixed(1)),
+    putts: totalPutts,
+    hasPutts: puttsKnown.length >= Math.floor(r.holesCount * 0.8),
+    upAndDownMade,
+    upAndDownOpps,
+    upAndDownPct,
+    firHits,
+    firOpps: firOpps.length,
+    firPct,
+    albatross,
+    eagles,
+    birdies,
+    pars,
+    bogeys,
+    dblPlus,
+    par3ToPar: parAvg[3],
+    par4ToPar: parAvg[4],
+    par5ToPar: parAvg[5]
+  };
+}
+
+function populateCourseFilter() {
+  const sel = document.getElementById('courseFilter');
+  const current = sel.value;
+  const courses = [...new Set(allRounds.map(r => r.course))].sort();
+  sel.innerHTML = '<option value="ALL">All Courses (' + courses.length + ')</option>' +
+    courses.map(c => `<option value="${c}">${c}</option>`).join('');
+  if (courses.includes(current)) sel.value = current;
+}
+
+function getFilteredData() {
+  const scope = document.getElementById('roundScopeFilter').value;
+  const course = document.getElementById('courseFilter').value;
+  const dateFrom = document.getElementById('dateFrom').value;
+  const dateTo = document.getElementById('dateTo').value;
+  const parFilter = document.getElementById('parFilter').value;
+  const firFilter = document.getElementById('firFilter').value;
+
+  const filteredRounds = allRounds.filter(r => {
+    if (scope === '18' && r.holesCount !== 18) return false;
+    if (course !== 'ALL' && r.course !== course) return false;
+    if (dateFrom && r.date < dateFrom) return false;
+    if (dateTo && r.date > dateTo) return false;
+    return true;
+  }).map(enrichRound);
+
+  const filteredHoles = [];
+  filteredRounds.forEach(r => {
+    r.holes.forEach(h => {
+      if (parFilter !== 'ALL' && String(h.par) !== parFilter) return;
+      if (firFilter !== 'ALL' && h.fir !== firFilter) return;
+      const isUpAndDownOpp = !h.stdGir && h.strokes !== null && h.strokes !== undefined;
+      const isUpAndDownMade = isUpAndDownOpp && h.strokes <= h.par;
+      filteredHoles.push({
+        date: r.date,
+        course: r.course,
+        tee: r.tee,
+        isUpAndDownOpp,
+        isUpAndDownMade,
+        ...h
+      });
+    });
+  });
+
+  return { filteredRounds, filteredHoles };
+}
+
+function refreshDashboard() {
+  const { filteredRounds, filteredHoles } = getFilteredData();
+  populateCompareSelector(filteredRounds);
+  renderComparisonPanel(filteredRounds);
+  renderKPIs(filteredRounds, filteredHoles);
+  renderScoringStrip(filteredRounds, filteredHoles);
+  renderCharts(filteredRounds, filteredHoles);
+  renderRoundsTable(filteredRounds);
+  syncSqlTables(filteredRounds, filteredHoles);
+  runCurrentSql();
+}
+
+function populateCompareSelector(rounds) {
+  const sel = document.getElementById('compareRoundSelect');
+  const prevVal = sel.value;
+  if (!rounds.length) {
+    sel.innerHTML = '<option value="">No rounds loaded</option>';
+    return;
+  }
+  const desc = [...rounds].sort((a, b) => b.date.localeCompare(a.date));
+  sel.innerHTML = desc.map((r, idx) =>
+    `<option value="${r.id}">${idx === 0 ? 'Latest: ' : ''}${r.date} — ${r.course} (${r.gross})</option>`
+  ).join('');
+  if (desc.some(r => r.id === prevVal)) {
+    sel.value = prevVal;
+  } else {
+    sel.value = desc[0].id;
+  }
+}
+
+function renderComparisonPanel(rounds) {
+  const grid = document.getElementById('compareGrid');
+  const sub = document.getElementById('compareSubtitle');
+  if (!rounds.length) {
+    sub.textContent = 'Import your Garmin scorecards or connect Cloud Sync to compare your latest round against your historical baseline.';
+    grid.innerHTML = '';
+    return;
+  }
+
+  const targetId = document.getElementById('compareRoundSelect').value;
+  const baselineMode = document.getElementById('compareBaselineSelect').value;
+  const target = rounds.find(r => r.id === targetId) || rounds[rounds.length - 1];
+
+  const sortedAsc = [...rounds].sort((a, b) => a.date.localeCompare(b.date));
+  const targetIdx = sortedAsc.findIndex(r => r.id === target.id);
+  let pool = sortedAsc.slice(0, targetIdx);
+  if (!pool.length) {
+    pool = sortedAsc.filter(r => r.id !== target.id);
+  }
+  if (baselineMode === 'last5_prior') {
+    pool = pool.slice(-5);
+  } else if (baselineMode === 'same_course') {
+    const sameCourse = pool.filter(r => r.course === target.course);
+    if (sameCourse.length) pool = sameCourse;
+  }
+
+  if (!pool.length) {
+    sub.textContent = `Showing ${target.date} (${target.course}) — add more rounds to unlock historical baseline deltas.`;
+    grid.innerHTML = '';
+    return;
+  }
+
+  const modeLabel = baselineMode === 'last5_prior'
+    ? `last ${pool.length} prior round(s)`
+    : baselineMode === 'same_course'
+      ? `${pool.length} prior round(s) at ${target.course}`
+      : `${pool.length} prior round(s)`;
+  sub.textContent = `Comparing ${target.date} at ${target.course} against your average across ${modeLabel}`;
+
+  const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const baseGross = avg(pool.map(r => r.gross));
+  const baseToPar = avg(pool.map(r => r.toPar));
+  const baseGir = avg(pool.map(r => r.girPct));
+  const baseUd = avg(pool.map(r => r.upAndDownPct));
+  const puttPool = pool.filter(r => r.hasPutts);
+  const basePutts = puttPool.length ? avg(puttPool.map(r => r.putts)) : null;
+  const firPool = pool.filter(r => r.firPct !== null);
+  const baseFir = firPool.length ? avg(firPool.map(r => r.firPct)) : null;
+  const baseBirdies = avg(pool.map(r => r.birdies + r.eagles + r.albatross));
+  const basePars = avg(pool.map(r => r.pars));
+  const baseBogeys = avg(pool.map(r => r.bogeys));
+  const baseDbl = avg(pool.map(r => r.dblPlus));
+
+  const p3Pool = pool.filter(r => r.par3ToPar !== null);
+  const baseP3 = p3Pool.length ? avg(p3Pool.map(r => r.par3ToPar)) : null;
+  const p4Pool = pool.filter(r => r.par4ToPar !== null);
+  const baseP4 = p4Pool.length ? avg(p4Pool.map(r => r.par4ToPar)) : null;
+  const p5Pool = pool.filter(r => r.par5ToPar !== null);
+  const baseP5 = p5Pool.length ? avg(p5Pool.map(r => r.par5ToPar)) : null;
+
+  function makeCard(label, val, base, unit, lowerIsBetter, decimals = 1, signed = false) {
+    if (val === null || val === undefined || base === null || base === undefined) {
+      return `<div class="cmp-card"><div class="cmp-label">${label}</div><div class="cmp-row"><span class="cmp-val">—</span></div><div class="cmp-base">Insufficient data</div></div>`;
+    }
+    const diff = val - base;
+    const absDiff = Math.abs(diff);
+    const fmtVal = (signed && val > 0 ? '+' : '') + val.toFixed(decimals) + unit;
+    const fmtBase = (signed && base > 0 ? '+' : '') + base.toFixed(decimals) + unit;
+    let cls = 'delta-neutral';
+    if (absDiff >= 0.05) {
+      const isGood = lowerIsBetter ? diff < 0 : diff > 0;
+      cls = isGood ? 'delta-good' : 'delta-bad';
+    }
+    const signStr = diff > 0.04 ? '+' : (diff < -0.04 ? '' : '±');
+    return `
+      <div class="cmp-card">
+        <div class="cmp-label">${label}</div>
+        <div class="cmp-row">
+          <span class="cmp-val">${fmtVal}</span>
+          <span class="delta-badge ${cls}">${signStr}${diff.toFixed(decimals)}${unit}</span>
+        </div>
+        <div class="cmp-base">Hist. avg: <strong>${fmtBase}</strong></div>
+      </div>
+    `;
+  }
+
+  const targetBirdiesPlus = target.birdies + target.eagles + target.albatross;
+  grid.innerHTML = [
+    makeCard('Gross Score', target.gross, baseGross, '', true, 1, false),
+    makeCard('Score to Par', target.toPar, baseToPar, '', true, 1, true),
+    makeCard('GIR %', target.girPct, baseGir, '%', false, 1, false),
+    makeCard('Up & Down %', target.upAndDownPct, baseUd, '%', false, 1, false),
+    makeCard('Putts / Round', target.hasPutts ? target.putts : null, basePutts, '', true, 1, false),
+    makeCard('Fairways Hit %', target.firPct, baseFir, '%', false, 1, false),
+    makeCard('Birdies or Better', targetBirdiesPlus, baseBirdies, '', false, 1, false),
+    makeCard('Pars', target.pars, basePars, '', false, 1, false),
+    makeCard('Bogeys', target.bogeys, baseBogeys, '', true, 1, false),
+    makeCard('Double Bogey+', target.dblPlus, baseDbl, '', true, 1, false),
+    makeCard('Par 3 Avg (+/-)', target.par3ToPar, baseP3, '', true, 2, true),
+    makeCard('Par 4 Avg (+/-)', target.par4ToPar, baseP4, '', true, 2, true),
+    makeCard('Par 5 Avg (+/-)', target.par5ToPar, baseP5, '', true, 2, true)
+  ].join('');
+}
+
+function renderKPIs(rounds, holes) {
+  const grid = document.getElementById('kpiGrid');
+  if (!rounds.length) {
+    grid.innerHTML = '<div class="kpi-card"><div class="kpi-label">No Rounds Loaded</div><div class="kpi-sub">Click <strong>Import .FIT / JSON</strong> or connect <strong>Cloud Sync</strong> above</div></div>';
+    return;
+  }
+  const n = rounds.length;
+  const avgGross = (rounds.reduce((s, r) => s + r.gross, 0) / n).toFixed(1);
+  const avgToPar = (rounds.reduce((s, r) => s + r.toPar, 0) / n).toFixed(1);
+  const bestGross = Math.min(...rounds.map(r => r.gross));
+
+  const totalHoles = holes.length || 1;
+  const girs = holes.filter(h => h.stdGir).length;
+  const girPct = ((girs / totalHoles) * 100).toFixed(1);
+  const avgGirsPerRound = (girs / n).toFixed(1);
+
+  const udOpps = holes.filter(h => h.isUpAndDownOpp).length;
+  const udMade = holes.filter(h => h.isUpAndDownMade).length;
+  const udPct = udOpps ? ((udMade / udOpps) * 100).toFixed(1) : '—';
+
+  const puttRounds = rounds.filter(r => r.hasPutts);
+  const avgPutts = puttRounds.length ? (puttRounds.reduce((s, r) => s + r.putts, 0) / puttRounds.length).toFixed(1) : '—';
+
+  const firOpps = holes.filter(h => h.par >= 4 && h.fir !== 'NA');
+  const firHits = firOpps.filter(h => h.fir === 'HIT').length;
+  const firPct = firOpps.length ? ((firHits / firOpps.length) * 100).toFixed(1) : '—';
+
+  grid.innerHTML = `
+    <div class="kpi-card">
+      <div class="kpi-label">Scoring Average (${n} Rounds)</div>
+      <div class="kpi-value">${avgGross} <span style="font-size:1rem;color:var(--text-muted)">(+${avgToPar})</span></div>
+      <div class="kpi-sub">Best round in view: <strong>${bestGross}</strong></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Greens in Regulation (GIR %)</div>
+      <div class="kpi-value highlight-green">${girPct}%</div>
+      <div class="kpi-sub"><strong>${girs}</strong> / ${holes.length} holes (${avgGirsPerRound} per round)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Up &amp; Down % (Scrambling)</div>
+      <div class="kpi-value highlight-amber">${udPct}%</div>
+      <div class="kpi-sub"><strong>${udMade}</strong> / ${udOpps} missed GIRs saved for par+</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Average Putts / Round</div>
+      <div class="kpi-value highlight-blue">${avgPutts}</div>
+      <div class="kpi-sub">Across ${puttRounds.length} putt-tracked rounds</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Fairways Hit %</div>
+      <div class="kpi-value">${firPct}%</div>
+      <div class="kpi-sub"><strong>${firHits}</strong> / ${firOpps.length} Par 4 &amp; 5 tee shots</div>
+    </div>
+  `;
+}
+
+function renderScoringStrip(rounds, holes) {
+  const strip = document.getElementById('scoringStrip');
+  if (!rounds.length) {
+    strip.innerHTML = '';
+    return;
+  }
+  const n = rounds.length;
+  let albatross = 0, eagles = 0, birdies = 0, pars = 0, bogeys = 0, dblPlus = 0;
+  holes.forEach(h => {
+    if (h.strokes === null || h.strokes === undefined) return;
+    const diff = h.strokes - h.par;
+    if (diff <= -3) albatross++;
+    else if (diff === -2) eagles++;
+    else if (diff === -1) birdies++;
+    else if (diff === 0) pars++;
+    else if (diff === 1) bogeys++;
+    else dblPlus++;
+  });
+
+  const items = [
+    { label: 'Albatross', total: albatross, color: 'highlight-purple' },
+    { label: 'Eagles', total: eagles, color: 'highlight-cyan' },
+    { label: 'Birdies', total: birdies, color: 'highlight-blue' },
+    { label: 'Pars', total: pars, color: 'highlight-green' },
+    { label: 'Bogeys', total: bogeys, color: 'highlight-amber' },
+    { label: 'Double Bogey+', total: dblPlus, color: 'highlight-rose' }
+  ];
+
+  strip.innerHTML = items.map(it => `
+    <div class="score-box">
+      <div class="score-box-top"><span>${it.label}</span><span>${(it.total / n).toFixed(1)} / rd</span></div>
+      <div class="score-box-val ${it.color}">${it.total}</div>
+      <div class="score-box-sub">${((it.total / (holes.length || 1)) * 100).toFixed(1)}% of holes</div>
+    </div>
+  `).join('');
+}
+
+function renderCharts(rounds, holes) {
+  Object.values(charts).forEach(c => c.destroy());
+  charts = {};
+
+  const labels = rounds.map(r => `${r.date.slice(5)} ${r.course.split(' ')[0]}`);
+
+  charts.gir = new Chart(document.getElementById('girChart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'GIR %', data: rounds.map(r => r.girPct), backgroundColor: '#10b981', borderRadius: 4 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        y: { beginAtZero: true, max: 100, grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
+        x: { ticks: { color: '#94a3b8' }, grid: { display: false } }
+      },
+      plugins: { legend: { labels: { color: '#f8fafc' } } }
+    }
+  });
+
+  charts.score = new Chart(document.getElementById('scoreChart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Gross Score', data: rounds.map(r => r.gross), borderColor: '#38bdf8', backgroundColor: 'rgba(56, 189, 248, 0.15)', fill: true, tension: 0.25 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        y: { grid: { color: '#334155' }, ticks: { color: '#38bdf8' } },
+        x: { ticks: { color: '#94a3b8' }, grid: { display: false } }
+      },
+      plugins: { legend: { labels: { color: '#f8fafc' } } }
+    }
+  });
+
+  const pars = [3, 4, 5];
+  const parToPar = pars.map(p => {
+    const sub = holes.filter(h => h.par === p && h.strokes !== null && h.strokes !== undefined);
+    return sub.length ? Number((sub.reduce((s, h) => s + (h.strokes - h.par), 0) / sub.length).toFixed(2)) : 0;
+  });
+  const parGir = pars.map(p => {
+    const sub = holes.filter(h => h.par === p);
+    return sub.length ? Number(((sub.filter(h => h.stdGir).length / sub.length) * 100).toFixed(1)) : 0;
+  });
+
+  charts.par = new Chart(document.getElementById('parChart'), {
+    type: 'bar',
+    data: {
+      labels: ['Par 3s', 'Par 4s', 'Par 5s'],
+      datasets: [
+        { label: 'Avg Score Over Par', data: parToPar, backgroundColor: '#a78bfa', yAxisID: 'y', borderRadius: 4 },
+        { label: 'GIR %', data: parGir, backgroundColor: '#10b981', yAxisID: 'y1', borderRadius: 4 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        y: { position: 'left', beginAtZero: true, grid: { color: '#334155' }, ticks: { color: '#a78bfa' } },
+        y1: { position: 'right', beginAtZero: true, max: 100, grid: { drawOnChartArea: false }, ticks: { color: '#10b981' } },
+        x: { ticks: { color: '#94a3b8' }, grid: { display: false } }
+      },
+      plugins: { legend: { labels: { color: '#f8fafc' } } }
+    }
+  });
+
+  const outcomes = ['HIT', 'LEFT', 'RIGHT'];
+  const outcomeCounts = outcomes.map(o => holes.filter(h => h.par >= 4 && h.fir === o).length);
+  const outcomeToPar = outcomes.map(o => {
+    const sub = holes.filter(h => h.par >= 4 && h.fir === o && h.strokes !== null && h.strokes !== undefined);
+    return sub.length ? Number((sub.reduce((s, h) => s + (h.strokes - h.par), 0) / sub.length).toFixed(2)) : 0;
+  });
+
+  charts.fir = new Chart(document.getElementById('firChart'), {
+    type: 'bar',
+    data: {
+      labels: ['Fairway Hit', 'Missed Left', 'Missed Right'],
+      datasets: [
+        { label: 'Hole Count', data: outcomeCounts, backgroundColor: ['#10b981', '#f43f5e', '#f59e0b'], yAxisID: 'y', borderRadius: 4 },
+        { label: 'Avg Score to Par', data: outcomeToPar, type: 'line', borderColor: '#38bdf8', backgroundColor: '#38bdf8', yAxisID: 'y1' }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        y: { position: 'left', beginAtZero: true, grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
+        y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, ticks: { color: '#38bdf8' } },
+        x: { ticks: { color: '#94a3b8' }, grid: { display: false } }
+      },
+      plugins: { legend: { labels: { color: '#f8fafc' } } }
+    }
+  });
+}
+
+function renderRoundsTable(rounds) {
+  const tbody = document.getElementById('roundsTableBody');
+  const sorted = [...rounds].sort((a, b) => b.date.localeCompare(a.date));
+  tbody.innerHTML = sorted.map(r => {
+    return `
+      <tr style="cursor:pointer;" onclick="openRoundModal('${r.id}')">
+        <td><strong>${r.date}</strong></td>
+        <td>${r.course}</td>
+        <td>${r.tee}</td>
+        <td>${r.par}</td>
+        <td><strong>${r.gross}</strong></td>
+        <td><span class="pill ${r.toPar <= 12 ? 'pill-green' : r.toPar <= 20 ? 'pill-amber' : 'pill-rose'}">+${r.toPar}</span></td>
+        <td>${r.outScore ?? '—'} / ${r.inScore ?? '—'}</td>
+        <td><span class="pill pill-green">${r.girCount}/${r.holesCount} (${r.girPct}%)</span></td>
+        <td>${r.upAndDownMade}/${r.upAndDownOpps} (${r.upAndDownPct}%)</td>
+        <td>${r.putts}</td>
+        <td>${r.firHits}/${r.firOpps}</td>
+        <td>${r.albatross}</td>
+        <td>${r.eagles}</td>
+        <td>${r.birdies}</td>
+        <td>${r.pars}</td>
+        <td>${r.bogeys}</td>
+        <td>${r.dblPlus}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function openRoundModal(roundId) {
+  const r = allRounds.find(x => x.id === roundId);
+  if (!r) return;
+  document.getElementById('modalTitle').textContent = `${r.course} — ${r.date} (${r.tee} Tees)`;
+  const girCount = r.holes.filter(h => h.stdGir).length;
+  const missed = r.holes.filter(h => !h.stdGir && h.strokes !== null && h.strokes !== undefined);
+  const udMade = missed.filter(h => h.strokes <= h.par).length;
+  document.getElementById('modalSub').textContent = `Gross: ${r.gross} (+${r.gross - r.par}) | GIR: ${girCount}/${r.holesCount} | Up & Down: ${udMade}/${missed.length} | Putts: ${r.garminPutts ?? '—'}`;
+
+  document.getElementById('modalTableBody').innerHTML = r.holes.map(h => {
+    const diff = h.strokes - h.par;
+    const label = diff <= -3 ? 'Albatross' : diff === -2 ? 'Eagle' : diff === -1 ? 'Birdie' : diff === 0 ? 'Par' : diff === 1 ? 'Bogey' : `+${diff}`;
+    const pillClass = diff <= -2 ? 'pill-purple' : diff === -1 ? 'pill-blue' : diff === 0 ? 'pill-green' : diff === 1 ? 'pill-amber' : 'pill-rose';
+    const udText = h.stdGir ? '—' : (h.strokes !== null && h.strokes <= h.par ? '<span class="pill pill-green">✓ Saved</span>' : '✕');
+    return `
+      <tr>
+        <td><strong>${h.hole}</strong></td>
+        <td>${h.par}</td>
+        <td>${h.si ?? '—'}</td>
+        <td>${h.yards ? h.yards + 'y' : '—'}</td>
+        <td><strong>${h.strokes ?? '—'}</strong></td>
+        <td><span class="pill ${pillClass}">${label}</span></td>
+        <td>${h.fir}</td>
+        <td>${h.putts ?? '—'}</td>
+        <td>${h.stdGir ? '<span class="pill pill-green">✓</span>' : '✕'}</td>
+        <td>${udText}</td>
+        <td>${h.penalties || 0}</td>
+      </tr>
+    `;
+  }).join('');
+
+  document.getElementById('roundModal').classList.add('open');
+}
+
+// --- SQL Engine (AlaSQL) ---
+function syncSqlTables(rounds, holes) {
+  alasql('DROP TABLE IF EXISTS rounds');
+  alasql('DROP TABLE IF EXISTS holes');
+  alasql('CREATE TABLE rounds');
+  alasql('CREATE TABLE holes');
+  alasql.tables.rounds.data = rounds;
+  alasql.tables.holes.data = holes;
+}
+
+function runCurrentSql() {
+  const query = document.getElementById('sqlInput').value.trim();
+  const container = document.getElementById('sqlResults');
+  if (!query) return;
+  try {
+    const res = alasql(query);
+    if (!Array.isArray(res) || !res.length) {
+      container.innerHTML = '<p style="color:var(--text-muted);font-size:0.85rem;">Query returned 0 rows.</p>';
+      return;
+    }
+    const cols = Object.keys(res[0]);
+    container.innerHTML = `
+      <table>
+        <thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${res.map(row => `<tr>${cols.map(c => `<td>${row[c] !== null && row[c] !== undefined ? row[c] : '—'}</td>`).join('')}</tr>`).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (err) {
+    container.innerHTML = `<p style="color:var(--rose);font-size:0.85rem;">SQL Error: ${err.message}</p>`;
+  }
+}
+
+// --- Event Wiring ---
+document.getElementById('fitInput').addEventListener('change', e => handleFiles(e.target.files));
+
+const dropzone = document.getElementById('dropzone');
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('dragover');
+  handleFiles(e.dataTransfer.files);
+});
+
+['roundScopeFilter', 'courseFilter', 'dateFrom', 'dateTo', 'parFilter', 'firFilter'].forEach(id => {
+  document.getElementById(id).addEventListener('change', refreshDashboard);
+});
+
+['compareRoundSelect', 'compareBaselineSelect'].forEach(id => {
+  document.getElementById(id).addEventListener('change', () => {
+    const { filteredRounds } = getFilteredData();
+    renderComparisonPanel(filteredRounds);
+  });
+});
+
+document.getElementById('runSqlBtn').addEventListener('click', runCurrentSql);
+document.querySelectorAll('.preset-chip').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.getElementById('sqlInput').value = btn.dataset.sql;
+    runCurrentSql();
+  });
+});
+
+document.getElementById('resetDataBtn').addEventListener('click', () => {
+  if (confirm('Clear locally cached rounds on this device? (Cloud rounds in golf-data are untouched)')) {
+    allRounds = [];
+    saveData();
+    populateCourseFilter();
+    refreshDashboard();
+    updateStatus('<strong>Local Cache Cleared:</strong> 0 rounds locally.');
+  }
+});
+
+document.getElementById('exportJsonBtn').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(allRounds, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `garmin_golf_scorecards_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+});
+
+document.getElementById('closeModalBtn').addEventListener('click', () => {
+  document.getElementById('roundModal').classList.remove('open');
+});
+document.getElementById('roundModal').addEventListener('click', e => {
+  if (e.target.id === 'roundModal') document.getElementById('roundModal').classList.remove('open');
+});
+
+// Cloud Sync Modal Events
+document.getElementById('syncSettingsBtn').addEventListener('click', () => {
+  const cfg = getSyncConfig();
+  document.getElementById('syncRepoInput').value = cfg.repo;
+  document.getElementById('syncTokenInput').value = cfg.token;
+  document.getElementById('syncModal').classList.add('open');
+});
+document.getElementById('closeSyncModalBtn').addEventListener('click', () => {
+  document.getElementById('syncModal').classList.remove('open');
+});
+document.getElementById('syncModal').addEventListener('click', e => {
+  if (e.target.id === 'syncModal') document.getElementById('syncModal').classList.remove('open');
+});
+document.getElementById('saveAndSyncBtn').addEventListener('click', async () => {
+  saveSyncConfig(document.getElementById('syncRepoInput').value, document.getElementById('syncTokenInput').value);
+  await syncWithGitHub({ pushOnly: false, silent: false });
+});
+document.getElementById('forcePushBtn').addEventListener('click', async () => {
+  saveSyncConfig(document.getElementById('syncRepoInput').value, document.getElementById('syncTokenInput').value);
+  await syncWithGitHub({ pushOnly: true, silent: false });
+});
+document.getElementById('disconnectSyncBtn').addEventListener('click', () => {
+  localStorage.removeItem(SYNC_CFG_KEY);
+  document.getElementById('syncTokenInput').value = '';
+  document.getElementById('syncModalStatus').textContent = 'Disconnected from GitHub Cloud Sync on this device.';
+  updateCloudStatus('☁️ <strong>Cloud Sync:</strong> Disconnected.', false);
+});
+
+// Boot & Auto-Sync
+loadInitialData();
+populateCourseFilter();
+refreshDashboard();
+if (getSyncConfig().token) {
+  syncWithGitHub({ pushOnly: false, silent: true });
+}
+</script>
+</body>
+</html>

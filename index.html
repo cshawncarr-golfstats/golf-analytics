@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Golf Stats" />
-<title>Golf Analytics Studio v3.1 — Cloud-Synced Garmin Scorecard Intelligence</title>
+<title>Golf Analytics Studio v3.2 — Cloud-Synced Garmin Scorecard Intelligence</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/alasql@4.4.0/dist/alasql.min.js"></script>
 <style>
@@ -130,7 +130,7 @@
 
   .kpi-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
     gap: 14px;
     margin-bottom: 16px;
   }
@@ -328,8 +328,8 @@
 <div class="container">
   <header>
     <div class="brand">
-      <h1>⛳ Golf Analytics Studio <span class="badge">v3.1 • Private Cloud Sync</span></h1>
-      <p>Traditional GIR, Up &amp; Down Scrambling, Round vs. Historical Baseline Comparison &amp; SQL Querying</p>
+      <h1>⛳ Golf Analytics Studio <span class="badge">v3.2 • Private Cloud Sync</span></h1>
+      <p>Traditional GIR, Up &amp; Down Scrambling, Penalties, Baseline Comparison &amp; SQL Querying</p>
     </div>
     <div class="actions">
       <button id="syncSettingsBtn" class="btn-sync">☁️ Cloud Sync</button>
@@ -345,7 +345,7 @@
       <strong>Active Dataset:</strong> Checking local browser storage...
     </div>
     <div class="dropzone-text" id="cloudStatusText">
-      ☁️ <strong>Cloud Sync:</strong> Click <strong>Cloud Sync</strong> above to connect your private <code>golf-data</code> repo.
+      ☁️ <strong>Cloud Sync:</strong> Click <strong>Cloud Sync</strong> above to connect your private <code>golfdata</code> repo.
     </div>
   </div>
 
@@ -459,14 +459,15 @@
       </div>
     </div>
     <div class="sql-presets">
-      <button class="preset-chip" data-sql="SELECT course, COUNT(*) AS rounds, ROUND(AVG(gross),1) AS avg_gross, ROUND(AVG(girPct),1) AS gir_pct, ROUND(AVG(upAndDownPct),1) AS up_down_pct, ROUND(AVG(putts),1) AS avg_putts FROM rounds GROUP BY course ORDER BY rounds DESC">Course Leaderboard</button>
-      <button class="preset-chip" data-sql="SELECT par, COUNT(*) AS holes, ROUND(AVG(strokes),2) AS avg_score, ROUND(AVG(strokes - par),2) AS to_par, ROUND(100.0 * SUM(CASE WHEN stdGir THEN 1 ELSE 0 END)/COUNT(*),1) AS gir_pct, ROUND(100.0 * SUM(CASE WHEN NOT stdGir AND strokes <= par THEN 1 ELSE 0 END)/NULLIF(SUM(CASE WHEN NOT stdGir THEN 1 ELSE 0 END),0),1) AS up_down_pct FROM holes GROUP BY par ORDER BY par">Stats by Par (3 / 4 / 5)</button>
+      <button class="preset-chip" data-sql="SELECT course, COUNT(*) AS rounds, ROUND(AVG(gross),1) AS avg_gross, ROUND(AVG(girPct),1) AS gir_pct, ROUND(AVG(upAndDownPct),1) AS up_down_pct, ROUND(AVG(putts),1) AS avg_putts, ROUND(AVG(penalties),2) AS avg_penalties FROM rounds GROUP BY course ORDER BY rounds DESC">Course Leaderboard</button>
+      <button class="preset-chip" data-sql="SELECT par, COUNT(*) AS holes, ROUND(AVG(strokes),2) AS avg_score, ROUND(AVG(strokes - par),2) AS to_par, SUM(COALESCE(penalties, 0)) AS total_penalties, ROUND(AVG(COALESCE(penalties, 0)),2) AS penalties_per_hole, ROUND(100.0 * SUM(CASE WHEN stdGir THEN 1 ELSE 0 END)/COUNT(*),1) AS gir_pct, ROUND(100.0 * SUM(CASE WHEN NOT stdGir AND strokes <= par THEN 1 ELSE 0 END)/NULLIF(SUM(CASE WHEN NOT stdGir THEN 1 ELSE 0 END),0),1) AS up_down_pct FROM holes GROUP BY par ORDER BY par">Stats by Par (3 / 4 / 5)</button>
+      <button class="preset-chip" data-sql="SELECT par, COUNT(*) AS holes, SUM(COALESCE(penalties, 0)) AS penalties, ROUND(AVG(COALESCE(penalties, 0)),2) AS penalties_per_hole, ROUND(1.0 * SUM(COALESCE(penalties, 0)) / NULLIF(COUNT(DISTINCT date || '|' || course), 0), 2) AS penalties_per_round FROM holes GROUP BY par ORDER BY par">Penalties by Par (3 / 4 / 5)</button>
       <button class="preset-chip" data-sql="SELECT CASE WHEN yards < 350 THEN 'Under 350y' WHEN yards <= 400 THEN '350-400y' ELSE '400y+' END AS length_band, COUNT(*) AS holes, ROUND(AVG(strokes - par),2) AS avg_to_par, ROUND(100.0 * SUM(CASE WHEN stdGir THEN 1 ELSE 0 END)/COUNT(*),1) AS gir_pct FROM holes WHERE par = 4 AND yards IS NOT NULL GROUP BY CASE WHEN yards < 350 THEN 'Under 350y' WHEN yards <= 400 THEN '350-400y' ELSE '400y+' END">Par 4 Length Brackets</button>
       <button class="preset-chip" data-sql="SELECT fir AS tee_outcome, COUNT(*) AS holes, ROUND(AVG(strokes - par),2) AS avg_to_par, ROUND(100.0 * SUM(CASE WHEN stdGir THEN 1 ELSE 0 END)/COUNT(*),1) AS gir_pct, ROUND(AVG(penalties),2) AS avg_penalties FROM holes WHERE par >= 4 GROUP BY fir">Fairway Hit vs Left/Right Miss</button>
-      <button class="preset-chip" data-sql="SELECT date, course, hole, par, yards, strokes, putts, fir FROM holes WHERE strokes >= par + 2 ORDER BY date DESC, hole ASC">All Double-Bogey+ Holes</button>
+      <button class="preset-chip" data-sql="SELECT date, course, hole, par, yards, strokes, putts, fir, penalties FROM holes WHERE strokes >= par + 2 ORDER BY date DESC, hole ASC">All Double-Bogey+ Holes</button>
     </div>
     <div class="sql-box">
-      <textarea id="sqlInput">SELECT course, COUNT(*) AS rounds, ROUND(AVG(gross),1) AS avg_gross, ROUND(AVG(girPct),1) AS gir_pct, ROUND(AVG(upAndDownPct),1) AS up_down_pct, ROUND(AVG(putts),1) AS avg_putts FROM rounds GROUP BY course ORDER BY rounds DESC</textarea>
+      <textarea id="sqlInput">SELECT par, COUNT(*) AS holes, ROUND(AVG(strokes),2) AS avg_score, ROUND(AVG(strokes - par),2) AS to_par, SUM(COALESCE(penalties, 0)) AS total_penalties, ROUND(AVG(COALESCE(penalties, 0)),2) AS penalties_per_hole, ROUND(100.0 * SUM(CASE WHEN stdGir THEN 1 ELSE 0 END)/COUNT(*),1) AS gir_pct, ROUND(100.0 * SUM(CASE WHEN NOT stdGir AND strokes <= par THEN 1 ELSE 0 END)/NULLIF(SUM(CASE WHEN NOT stdGir THEN 1 ELSE 0 END),0),1) AS up_down_pct FROM holes GROUP BY par ORDER BY par</textarea>
       <button id="runSqlBtn" class="btn-primary">Run Query</button>
     </div>
     <div class="sql-results" id="sqlResults"></div>
@@ -476,7 +477,7 @@
     <div class="panel-header">
       <div>
         <div class="panel-title">Round Log</div>
-        <div class="panel-sub">Click any round to inspect hole-by-hole GIR, Up &amp; Downs, and scoring breakdown</div>
+        <div class="panel-sub">Click any round to inspect hole-by-hole GIR, Up &amp; Downs, Penalties, and scoring breakdown</div>
       </div>
     </div>
     <div style="overflow-x:auto;">
@@ -493,6 +494,7 @@
             <th>GIR</th>
             <th>Up &amp; Down</th>
             <th>Putts</th>
+            <th>Pen</th>
             <th>FIR</th>
             <th>Alb</th>
             <th>Eag</th>
@@ -553,7 +555,7 @@
     </div>
     <div class="form-field">
       <label>Private Data Repository (owner/repo)</label>
-      <input type="text" id="syncRepoInput" value="cshawncarr-golfstats/golf-data" />
+      <input type="text" id="syncRepoInput" value="cshawncarr-golfstats/golfdata" />
     </div>
     <div class="form-field">
       <label>Fine-Grained Personal Access Token (Stored Locally on This Device Only)</label>
@@ -574,7 +576,7 @@
 const STARTER_ROUNDS = [];
 const STORAGE_KEY = 'golf_analytics_studio_rounds_v1';
 const SYNC_CFG_KEY = 'golf_analytics_github_sync_v1';
-const DEFAULT_REPO = 'cshawncarr-golfstats/golf-data';
+const DEFAULT_REPO = 'cshawncarr-golfstats/golfdata';
 const DATA_PATH = 'rounds.json';
 
 let allRounds = [];
@@ -744,7 +746,7 @@ function normalizeRound(r) {
       if (h.putts > 0 && (h.strokes - h.putts) <= (h.par - 2)) stdGir = true;
       else if (h.putts === 0 && h.strokes <= (h.par - 2)) stdGir = true;
     }
-    return { ...h, stdGir };
+    return { ...h, penalties: Number(h.penalties) || 0, stdGir };
   });
   return { ...r, holes };
 }
@@ -866,7 +868,7 @@ async function pushRemoteRounds(cfg, roundsArr, sha) {
 async function syncWithGitHub({ pushOnly = false, silent = false } = {}) {
   const cfg = getSyncConfig();
   if (!cfg.token) {
-    updateCloudStatus('☁️ <strong>Cloud Sync:</strong> Click <strong>Cloud Sync</strong> above to connect your private <code>golf-data</code> repo.', false);
+    updateCloudStatus('☁️ <strong>Cloud Sync:</strong> Click <strong>Cloud Sync</strong> above to connect your private <code>golfdata</code> repo.', false);
     return;
   }
 
@@ -884,7 +886,6 @@ async function syncWithGitHub({ pushOnly = false, silent = false } = {}) {
       return;
     }
 
-    // Two-way union merge by round ID
     const mergedMap = new Map();
     remote.rounds.forEach(r => { if (r && r.id) mergedMap.set(r.id, normalizeRound(r)); });
     let localHadNewer = !remote.exists;
@@ -973,6 +974,7 @@ function enrichRound(r) {
   const girCount = r.holes.filter(h => h.stdGir).length;
   const puttsKnown = r.holes.filter(h => h.putts !== null && h.putts !== undefined);
   const totalPutts = puttsKnown.reduce((s, h) => s + h.putts, 0);
+  const penalties = r.holes.reduce((s, h) => s + (Number(h.penalties) || 0), 0);
 
   const missedGirHoles = r.holes.filter(h => !h.stdGir && h.strokes !== null && h.strokes !== undefined);
   const upAndDownMade = missedGirHoles.filter(h => h.strokes <= h.par).length;
@@ -1007,6 +1009,7 @@ function enrichRound(r) {
     girCount,
     girPct: Number(((girCount / r.holesCount) * 100).toFixed(1)),
     putts: totalPutts,
+    penalties,
     hasPutts: puttsKnown.length >= Math.floor(r.holesCount * 0.8),
     upAndDownMade,
     upAndDownOpps,
@@ -1148,6 +1151,7 @@ function renderComparisonPanel(rounds) {
   const baseUd = avg(pool.map(r => r.upAndDownPct));
   const puttPool = pool.filter(r => r.hasPutts);
   const basePutts = puttPool.length ? avg(puttPool.map(r => r.putts)) : null;
+  const basePenalties = avg(pool.map(r => r.penalties));
   const firPool = pool.filter(r => r.firPct !== null);
   const baseFir = firPool.length ? avg(firPool.map(r => r.firPct)) : null;
   const baseBirdies = avg(pool.map(r => r.birdies + r.eagles + r.albatross));
@@ -1195,6 +1199,7 @@ function renderComparisonPanel(rounds) {
     makeCard('GIR %', target.girPct, baseGir, '%', false, 1, false),
     makeCard('Up & Down %', target.upAndDownPct, baseUd, '%', false, 1, false),
     makeCard('Putts / Round', target.hasPutts ? target.putts : null, basePutts, '', true, 1, false),
+    makeCard('Penalties / Round', target.penalties, basePenalties, '', true, 1, false),
     makeCard('Fairways Hit %', target.firPct, baseFir, '%', false, 1, false),
     makeCard('Birdies or Better', targetBirdiesPlus, baseBirdies, '', false, 1, false),
     makeCard('Pars', target.pars, basePars, '', false, 1, false),
@@ -1229,6 +1234,9 @@ function renderKPIs(rounds, holes) {
   const puttRounds = rounds.filter(r => r.hasPutts);
   const avgPutts = puttRounds.length ? (puttRounds.reduce((s, r) => s + r.putts, 0) / puttRounds.length).toFixed(1) : '—';
 
+  const totalPenalties = rounds.reduce((s, r) => s + (r.penalties || 0), 0);
+  const avgPenalties = (totalPenalties / n).toFixed(1);
+
   const firOpps = holes.filter(h => h.par >= 4 && h.fir !== 'NA');
   const firHits = firOpps.filter(h => h.fir === 'HIT').length;
   const firPct = firOpps.length ? ((firHits / firOpps.length) * 100).toFixed(1) : '—';
@@ -1253,6 +1261,11 @@ function renderKPIs(rounds, holes) {
       <div class="kpi-label">Average Putts / Round</div>
       <div class="kpi-value highlight-blue">${avgPutts}</div>
       <div class="kpi-sub">Across ${puttRounds.length} putt-tracked rounds</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Penalties / Round</div>
+      <div class="kpi-value highlight-rose">${avgPenalties}</div>
+      <div class="kpi-sub"><strong>${totalPenalties}</strong> total across ${n} rounds</div>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">Fairways Hit %</div>
@@ -1415,6 +1428,7 @@ function renderRoundsTable(rounds) {
         <td><span class="pill pill-green">${r.girCount}/${r.holesCount} (${r.girPct}%)</span></td>
         <td>${r.upAndDownMade}/${r.upAndDownOpps} (${r.upAndDownPct}%)</td>
         <td>${r.putts}</td>
+        <td>${r.penalties}</td>
         <td>${r.firHits}/${r.firOpps}</td>
         <td>${r.albatross}</td>
         <td>${r.eagles}</td>
@@ -1434,7 +1448,8 @@ function openRoundModal(roundId) {
   const girCount = r.holes.filter(h => h.stdGir).length;
   const missed = r.holes.filter(h => !h.stdGir && h.strokes !== null && h.strokes !== undefined);
   const udMade = missed.filter(h => h.strokes <= h.par).length;
-  document.getElementById('modalSub').textContent = `Gross: ${r.gross} (+${r.gross - r.par}) | GIR: ${girCount}/${r.holesCount} | Up & Down: ${udMade}/${missed.length} | Putts: ${r.garminPutts ?? '—'}`;
+  const penTotal = r.holes.reduce((s, h) => s + (Number(h.penalties) || 0), 0);
+  document.getElementById('modalSub').textContent = `Gross: ${r.gross} (+${r.gross - r.par}) | GIR: ${girCount}/${r.holesCount} | Up & Down: ${udMade}/${missed.length} | Putts: ${r.garminPutts ?? '—'} | Penalties: ${penTotal}`;
 
   document.getElementById('modalTableBody').innerHTML = r.holes.map(h => {
     const diff = h.strokes - h.par;
@@ -1527,7 +1542,7 @@ document.querySelectorAll('.preset-chip').forEach(btn => {
 });
 
 document.getElementById('resetDataBtn').addEventListener('click', () => {
-  if (confirm('Clear locally cached rounds on this device? (Cloud rounds in golf-data are untouched)')) {
+  if (confirm('Clear locally cached rounds on this device? (Cloud rounds in golfdata are untouched)')) {
     allRounds = [];
     saveData();
     populateCourseFilter();

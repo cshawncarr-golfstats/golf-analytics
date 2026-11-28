@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Golf Stats" />
-<title>Golf Analytics Studio v3.2 — Cloud-Synced Garmin Scorecard Intelligence</title>
+<title>Golf Analytics Studio v3.4 — Public Read-Only &amp; Owner Cloud Sync</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/alasql@4.4.0/dist/alasql.min.js"></script>
 <style>
@@ -55,6 +55,17 @@
     font-size: 0.75rem;
     font-weight: 600;
   }
+  .owner-link {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .owner-link:hover { color: var(--text); border-color: #64748b; background: var(--surface); }
   .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
   button, .file-btn {
     background: var(--surface);
@@ -76,9 +87,18 @@
   .btn-sync { border-color: rgba(56, 189, 248, 0.45); color: var(--blue); }
   .btn-sync:hover { background: rgba(56, 189, 248, 0.14); }
   .btn-sync.connected { border-color: rgba(16, 185, 129, 0.45); color: var(--accent); }
+  .btn-warn { color: var(--amber); border-color: rgba(245, 158, 11, 0.4); }
+  .btn-warn:hover { background: rgba(245, 158, 11, 0.14); }
   .btn-danger { color: var(--rose); border-color: rgba(244, 63, 94, 0.35); }
   .btn-danger:hover { background: rgba(244, 63, 94, 0.15); }
   input[type="file"] { display: none; }
+
+  .public-status {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: -10px 0 18px;
+  }
+  .public-status.error { color: var(--rose); }
 
   .dropzone {
     border: 2px dashed var(--border);
@@ -115,6 +135,30 @@
     color: var(--text-muted);
     margin-bottom: 5px;
     font-weight: 600;
+  }
+  .to-date-label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 5px;
+  }
+  .to-date-label-row label { margin-bottom: 0; }
+  .today-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 600;
+  }
+  .today-toggle input[type="checkbox"] {
+    accent-color: var(--accent);
+    cursor: pointer;
   }
   select, input[type="date"], input[type="text"], input[type="password"], textarea {
     width: 100%;
@@ -203,11 +247,34 @@
   .chart-wrap { position: relative; height: 260px; width: 100%; }
 
   .compare-section { margin-bottom: 24px; }
+  .compare-toggle-btn {
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 0;
+    text-align: left;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+  }
+  .compare-toggle-btn:hover { background: transparent; border: none; }
+  .compare-chevron {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+    display: inline-block;
+  }
+  .compare-chevron.open { transform: rotate(180deg); }
+  .compare-body { display: none; margin-top: 14px; }
+  .compare-body.open { display: block; }
   .compare-controls {
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
     align-items: center;
+    margin-bottom: 14px;
   }
   .compare-controls select {
     width: auto;
@@ -273,6 +340,7 @@
   .pill { padding: 2px 8px; border-radius: 999px; font-size: 0.74rem; font-weight: 600; }
   .pill-green { background: rgba(16, 185, 129, 0.18); color: var(--accent); }
   .pill-blue { background: rgba(56, 189, 248, 0.18); color: var(--blue); }
+  .pill-cyan { background: rgba(34, 211, 238, 0.18); color: var(--cyan); }
   .pill-amber { background: rgba(245, 158, 11, 0.18); color: var(--amber); }
   .pill-rose { background: rgba(244, 63, 94, 0.18); color: var(--rose); }
   .pill-purple { background: rgba(167, 139, 250, 0.18); color: var(--purple); }
@@ -298,7 +366,7 @@
     overflow-y: auto;
     padding: 22px;
   }
-  .modal-sm { max-width: 500px; }
+  .modal-sm { max-width: 520px; }
   .form-field { margin-bottom: 14px; }
   .form-field label {
     display: block;
@@ -318,6 +386,9 @@
     border: 1px solid var(--border);
     color: var(--text-muted);
   }
+  .owner-only { display: none; }
+  body.is-owner .owner-only { display: inline-flex; }
+  body.is-owner div.owner-only { display: flex; }
   @media (max-width: 640px) {
     .charts-grid { grid-template-columns: 1fr; }
     .compare-controls select { width: 100%; }
@@ -328,24 +399,30 @@
 <div class="container">
   <header>
     <div class="brand">
-      <h1>⛳ Golf Analytics Studio <span class="badge">v3.2 • Private Cloud Sync</span></h1>
-      <p>Traditional GIR, Up &amp; Down Scrambling, Penalties, Baseline Comparison &amp; SQL Querying</p>
+      <h1>
+        ⛳ Golf Analytics Studio <span class="badge">v3.4 • Public Read-Only</span>
+        <button type="button" id="ownerLinkBtn" class="owner-link" title="Open Cloud Sync &amp; Owner controls">Owner</button>
+      </h1>
+      <p>Up &amp; Down, Scrambling, Penalties, Round vs. Baseline Comparison &amp; SQL Querying</p>
     </div>
     <div class="actions">
-      <button id="syncSettingsBtn" class="btn-sync">☁️ Cloud Sync</button>
-      <label class="file-btn btn-primary" for="fitInput">📂 Import .FIT / JSON</label>
+      <button type="button" id="syncSettingsBtn" class="btn-sync owner-only">☁️ Cloud Sync</button>
+      <label class="file-btn btn-primary owner-only" for="fitInput">📂 Import .FIT / JSON</label>
       <input type="file" id="fitInput" accept=".fit,.json" multiple />
-      <button id="exportJsonBtn">⬇️ Export JSON</button>
-      <button id="resetDataBtn" class="btn-danger">🗑️ Clear Local</button>
+      <button type="button" id="replaceCloudBtn" class="btn-warn owner-only">⚠️ Replace Cloud Data</button>
+      <button type="button" id="exportJsonBtn" class="owner-only">⬇️ Export JSON</button>
+      <button type="button" id="resetDataBtn" class="btn-danger owner-only">🗑️ Clear Local</button>
     </div>
   </header>
 
-  <div class="dropzone" id="dropzone">
+  <div class="public-status" id="publicStatusText" role="status">Loading rounds…</div>
+
+  <div class="dropzone owner-only" id="dropzone">
     <div class="dropzone-text" id="dataStatusText">
       <strong>Active Dataset:</strong> Checking local browser storage...
     </div>
     <div class="dropzone-text" id="cloudStatusText">
-      ☁️ <strong>Cloud Sync:</strong> Click <strong>Cloud Sync</strong> above to connect your private <code>golfdata</code> repo.
+      ☁️ <strong>Cloud Sync:</strong> Ready.
     </div>
   </div>
 
@@ -368,7 +445,12 @@
       <input type="date" id="dateFrom" />
     </div>
     <div class="filter-group">
-      <label>To Date</label>
+      <div class="to-date-label-row">
+        <label for="dateTo">To Date</label>
+        <label class="today-toggle" title="Always set To Date to today's date on load">
+          <input type="checkbox" id="toTodayCheckbox" checked /> To = today
+        </label>
+      </div>
       <input type="date" id="dateTo" />
     </div>
     <div class="filter-group">
@@ -391,12 +473,20 @@
     </div>
   </div>
 
+  <div class="kpi-grid" id="kpiGrid"></div>
+  <div class="scoring-strip" id="scoringStrip"></div>
+
   <div class="panel compare-section" id="compareSection">
-    <div class="panel-header">
-      <div>
-        <div class="panel-title">📊 Round vs. Historical Baseline Comparison</div>
-        <div class="panel-sub" id="compareSubtitle">See how your latest round stacks up against your historical averages across every area</div>
-      </div>
+    <div class="panel-header" style="margin-bottom:0;">
+      <button type="button" id="compareToggleBtn" class="compare-toggle-btn" aria-expanded="false" aria-controls="compareBody">
+        <div>
+          <div class="panel-title">📊 Round vs. Historical Baseline Comparison</div>
+          <div class="panel-sub" id="compareSubtitle">Click to expand and compare a round against your historical averages</div>
+        </div>
+        <span class="compare-chevron" id="compareChevron" aria-hidden="true">▼</span>
+      </button>
+    </div>
+    <div class="compare-body" id="compareBody">
       <div class="compare-controls">
         <select id="compareRoundSelect" aria-label="Select round to compare"></select>
         <select id="compareBaselineSelect" aria-label="Select historical baseline">
@@ -405,12 +495,9 @@
           <option value="same_course">vs. Same Course Prior Rounds</option>
         </select>
       </div>
+      <div class="compare-grid" id="compareGrid"></div>
     </div>
-    <div class="compare-grid" id="compareGrid"></div>
   </div>
-
-  <div class="kpi-grid" id="kpiGrid"></div>
-  <div class="scoring-strip" id="scoringStrip"></div>
 
   <div class="charts-grid">
     <div class="panel">
@@ -459,16 +546,16 @@
       </div>
     </div>
     <div class="sql-presets">
-      <button class="preset-chip" data-sql="SELECT course, COUNT(*) AS rounds, ROUND(AVG(gross),1) AS avg_gross, ROUND(AVG(girPct),1) AS gir_pct, ROUND(AVG(upAndDownPct),1) AS up_down_pct, ROUND(AVG(putts),1) AS avg_putts, ROUND(AVG(penalties),2) AS avg_penalties FROM rounds GROUP BY course ORDER BY rounds DESC">Course Leaderboard</button>
-      <button class="preset-chip" data-sql="SELECT par, COUNT(*) AS holes, ROUND(AVG(strokes),2) AS avg_score, ROUND(AVG(strokes - par),2) AS to_par, SUM(COALESCE(penalties, 0)) AS total_penalties, ROUND(AVG(COALESCE(penalties, 0)),2) AS penalties_per_hole, ROUND(100.0 * SUM(CASE WHEN stdGir THEN 1 ELSE 0 END)/COUNT(*),1) AS gir_pct, ROUND(100.0 * SUM(CASE WHEN NOT stdGir AND strokes <= par THEN 1 ELSE 0 END)/NULLIF(SUM(CASE WHEN NOT stdGir THEN 1 ELSE 0 END),0),1) AS up_down_pct FROM holes GROUP BY par ORDER BY par">Stats by Par (3 / 4 / 5)</button>
-      <button class="preset-chip" data-sql="SELECT par, COUNT(*) AS holes, SUM(COALESCE(penalties, 0)) AS penalties, ROUND(AVG(COALESCE(penalties, 0)),2) AS penalties_per_hole, ROUND(1.0 * SUM(COALESCE(penalties, 0)) / NULLIF(COUNT(DISTINCT date || '|' || course), 0), 2) AS penalties_per_round FROM holes GROUP BY par ORDER BY par">Penalties by Par (3 / 4 / 5)</button>
-      <button class="preset-chip" data-sql="SELECT CASE WHEN yards < 350 THEN 'Under 350y' WHEN yards <= 400 THEN '350-400y' ELSE '400y+' END AS length_band, COUNT(*) AS holes, ROUND(AVG(strokes - par),2) AS avg_to_par, ROUND(100.0 * SUM(CASE WHEN stdGir THEN 1 ELSE 0 END)/COUNT(*),1) AS gir_pct FROM holes WHERE par = 4 AND yards IS NOT NULL GROUP BY CASE WHEN yards < 350 THEN 'Under 350y' WHEN yards <= 400 THEN '350-400y' ELSE '400y+' END">Par 4 Length Brackets</button>
-      <button class="preset-chip" data-sql="SELECT fir AS tee_outcome, COUNT(*) AS holes, ROUND(AVG(strokes - par),2) AS avg_to_par, ROUND(100.0 * SUM(CASE WHEN stdGir THEN 1 ELSE 0 END)/COUNT(*),1) AS gir_pct, ROUND(AVG(penalties),2) AS avg_penalties FROM holes WHERE par >= 4 GROUP BY fir">Fairway Hit vs Left/Right Miss</button>
-      <button class="preset-chip" data-sql="SELECT date, course, hole, par, yards, strokes, putts, fir, penalties FROM holes WHERE strokes >= par + 2 ORDER BY date DESC, hole ASC">All Double-Bogey+ Holes</button>
+      <button type="button" class="preset-chip" data-sql="SELECT course, COUNT(*) AS rounds, ROUND(AVG(gross),1) AS avg_gross, ROUND(AVG(girPct),1) AS gir_pct, ROUND(100.0 * SUM(upDownMade)/NULLIF(SUM(upDownAtt),0),1) AS up_down_pct, ROUND(100.0 * SUM(scrambleMade)/NULLIF(SUM(scrambleAtt),0),1) AS scramble_pct, ROUND(AVG(putts),1) AS avg_putts, ROUND(AVG(penalties),2) AS avg_penalties FROM rounds GROUP BY course ORDER BY rounds DESC">Course Leaderboard</button>
+      <button type="button" class="preset-chip" data-sql="SELECT par, COUNT(*) AS holes, ROUND(AVG(strokes),2) AS avg_score, ROUND(AVG(strokes - par),2) AS to_par, SUM(COALESCE(penalties, 0)) AS total_penalties, ROUND(AVG(COALESCE(penalties, 0)),2) AS penalties_per_hole, ROUND(100.0 * SUM(CASE WHEN stdGir THEN 1 ELSE 0 END)/COUNT(*),1) AS gir_pct, ROUND(100.0 * SUM(CASE WHEN upAndDownMade THEN 1 ELSE 0 END)/NULLIF(SUM(CASE WHEN upAndDownAttempt THEN 1 ELSE 0 END),0),1) AS up_down_pct, ROUND(100.0 * SUM(CASE WHEN scrambleMade THEN 1 ELSE 0 END)/NULLIF(SUM(CASE WHEN scrambleAttempt THEN 1 ELSE 0 END),0),1) AS scramble_pct FROM holes GROUP BY par ORDER BY par">Stats by Par (3 / 4 / 5)</button>
+      <button type="button" class="preset-chip" data-sql="SELECT par, COUNT(*) AS holes, SUM(COALESCE(penalties, 0)) AS penalties, ROUND(AVG(COALESCE(penalties, 0)),2) AS penalties_per_hole, ROUND(1.0 * SUM(COALESCE(penalties, 0)) / NULLIF(COUNT(DISTINCT date || '|' || course), 0), 2) AS penalties_per_round FROM holes GROUP BY par ORDER BY par">Penalties by Par (3 / 4 / 5)</button>
+      <button type="button" class="preset-chip" data-sql="SELECT CASE WHEN yards < 350 THEN 'Under 350y' WHEN yards <= 400 THEN '350-400y' ELSE '400y+' END AS length_band, COUNT(*) AS holes, ROUND(AVG(strokes - par),2) AS avg_to_par, ROUND(100.0 * SUM(CASE WHEN stdGir THEN 1 ELSE 0 END)/COUNT(*),1) AS gir_pct, ROUND(100.0 * SUM(CASE WHEN upAndDownMade THEN 1 ELSE 0 END)/NULLIF(SUM(CASE WHEN upAndDownAttempt THEN 1 ELSE 0 END),0),1) AS up_down_pct, ROUND(100.0 * SUM(CASE WHEN scrambleMade THEN 1 ELSE 0 END)/NULLIF(SUM(CASE WHEN scrambleAttempt THEN 1 ELSE 0 END),0),1) AS scramble_pct FROM holes WHERE par = 4 AND yards IS NOT NULL GROUP BY CASE WHEN yards < 350 THEN 'Under 350y' WHEN yards <= 400 THEN '350-400y' ELSE '400y+' END">Par 4 Length Brackets</button>
+      <button type="button" class="preset-chip" data-sql="SELECT fir AS tee_outcome, COUNT(*) AS holes, ROUND(AVG(strokes - par),2) AS avg_to_par, ROUND(100.0 * SUM(CASE WHEN stdGir THEN 1 ELSE 0 END)/COUNT(*),1) AS gir_pct, ROUND(AVG(penalties),2) AS avg_penalties FROM holes WHERE par >= 4 GROUP BY fir">Fairway Hit vs Left/Right Miss</button>
+      <button type="button" class="preset-chip" data-sql="SELECT date, course, hole, par, yards, strokes, putts, fir, penalties, upAndDownAttempt, upAndDownMade, scrambleAttempt, scrambleMade FROM holes WHERE strokes >= par + 2 ORDER BY date DESC, hole ASC">All Double-Bogey+ Holes</button>
     </div>
     <div class="sql-box">
-      <textarea id="sqlInput">SELECT par, COUNT(*) AS holes, ROUND(AVG(strokes),2) AS avg_score, ROUND(AVG(strokes - par),2) AS to_par, SUM(COALESCE(penalties, 0)) AS total_penalties, ROUND(AVG(COALESCE(penalties, 0)),2) AS penalties_per_hole, ROUND(100.0 * SUM(CASE WHEN stdGir THEN 1 ELSE 0 END)/COUNT(*),1) AS gir_pct, ROUND(100.0 * SUM(CASE WHEN NOT stdGir AND strokes <= par THEN 1 ELSE 0 END)/NULLIF(SUM(CASE WHEN NOT stdGir THEN 1 ELSE 0 END),0),1) AS up_down_pct FROM holes GROUP BY par ORDER BY par</textarea>
-      <button id="runSqlBtn" class="btn-primary">Run Query</button>
+      <textarea id="sqlInput">SELECT par, COUNT(*) AS holes, ROUND(AVG(strokes),2) AS avg_score, ROUND(AVG(strokes - par),2) AS to_par, SUM(COALESCE(penalties, 0)) AS total_penalties, ROUND(AVG(COALESCE(penalties, 0)),2) AS penalties_per_hole, ROUND(100.0 * SUM(CASE WHEN stdGir THEN 1 ELSE 0 END)/COUNT(*),1) AS gir_pct, ROUND(100.0 * SUM(CASE WHEN upAndDownMade THEN 1 ELSE 0 END)/NULLIF(SUM(CASE WHEN upAndDownAttempt THEN 1 ELSE 0 END),0),1) AS up_down_pct, ROUND(100.0 * SUM(CASE WHEN scrambleMade THEN 1 ELSE 0 END)/NULLIF(SUM(CASE WHEN scrambleAttempt THEN 1 ELSE 0 END),0),1) AS scramble_pct FROM holes GROUP BY par ORDER BY par</textarea>
+      <button type="button" id="runSqlBtn" class="btn-primary">Run Query</button>
     </div>
     <div class="sql-results" id="sqlResults"></div>
   </div>
@@ -477,7 +564,7 @@
     <div class="panel-header">
       <div>
         <div class="panel-title">Round Log</div>
-        <div class="panel-sub">Click any round to inspect hole-by-hole GIR, Up &amp; Downs, Penalties, and scoring breakdown</div>
+        <div class="panel-sub">Click any round to inspect hole-by-hole GIR, Up &amp; Down, Scrambling, Penalties, and scoring breakdown</div>
       </div>
     </div>
     <div style="overflow-x:auto;">
@@ -493,6 +580,7 @@
             <th>Out / In</th>
             <th>GIR</th>
             <th>Up &amp; Down</th>
+            <th>Scramble</th>
             <th>Putts</th>
             <th>Pen</th>
             <th>FIR</th>
@@ -518,7 +606,7 @@
         <div class="panel-title" id="modalTitle">Round Breakdown</div>
         <div class="panel-sub" id="modalSub"></div>
       </div>
-      <button id="closeModalBtn">✕ Close</button>
+      <button type="button" id="closeModalBtn">✕ Close</button>
     </div>
     <div style="overflow-x:auto;">
       <table>
@@ -534,6 +622,7 @@
             <th>Putts</th>
             <th>GIR</th>
             <th>Up &amp; Down</th>
+            <th>Scramble</th>
             <th>Penalties</th>
           </tr>
         </thead>
@@ -548,39 +637,113 @@
   <div class="modal modal-sm">
     <div class="panel-header">
       <div>
-        <div class="panel-title">☁️ Private GitHub Cloud Sync</div>
-        <div class="panel-sub">Syncs <code>rounds.json</code> silently across your laptop &amp; iPhone</div>
+        <div class="panel-title">☁️ Owner Cloud Sync</div>
+        <div class="panel-sub">Pushes <code>rounds.json</code> to the repo that serves this site</div>
       </div>
-      <button id="closeSyncModalBtn">✕</button>
+      <button type="button" id="closeSyncModalBtn">✕</button>
     </div>
     <div class="form-field">
-      <label>Private Data Repository (owner/repo)</label>
-      <input type="text" id="syncRepoInput" value="cshawncarr-golfstats/golfdata" />
+      <label>Site Repository (owner/repo) — must be the repo serving this page</label>
+      <input type="text" id="syncRepoInput" value="" />
     </div>
     <div class="form-field">
       <label>Fine-Grained Personal Access Token (Stored Locally on This Device Only)</label>
-      <input type="password" id="syncTokenInput" placeholder="github_pat_..." />
+      <input type="password" id="syncTokenInput" placeholder="github_pat_..." autocomplete="off" />
     </div>
     <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:16px;">
-      <button id="saveAndSyncBtn" class="btn-primary">🔄 Save &amp; Sync Now</button>
-      <button id="forcePushBtn">⬆️ Push Local to Cloud</button>
-      <button id="disconnectSyncBtn" class="btn-danger">Disconnect</button>
+      <button type="button" id="saveAndSyncBtn" class="btn-primary">💾 Save Token</button>
+      <button type="button" id="disconnectSyncBtn" class="btn-danger">Disconnect</button>
     </div>
     <div class="sync-msg" id="syncModalStatus">
-      Paste your <code>github_pat_...</code> token once on each device. New imports auto-push to GitHub, and opening the app auto-pulls the latest rounds.
+      Enter your fine-grained token once per device. Visitors view <code>rounds.json</code> without any token or login. To overwrite the cloud copy, use <strong>Replace Cloud Data</strong> in the header.
     </div>
   </div>
 </div>
 
 <script>
+// Security note: Never embed any token, password, or secret in this HTML,
+// and never add an in-page password gate since page source is public.
 const STARTER_ROUNDS = [];
 const STORAGE_KEY = 'golf_analytics_studio_rounds_v1';
 const SYNC_CFG_KEY = 'golf_analytics_github_sync_v1';
-const DEFAULT_REPO = 'cshawncarr-golfstats/golfdata';
+const FILTER_DATES_KEY = 'golf_analytics_date_filters_v1';
+const PENDING_KEY = 'golf_analytics_pending_ids_v1';
 const DATA_PATH = 'rounds.json';
+
+// When served from GitHub Pages, work out the owner/repo from the page address so the
+// default push target is the repo that actually serves this site.
+function inferRepoFromLocation() {
+  try {
+    const host = location.hostname || '';
+    if (!host.endsWith('.github.io')) return '';
+    const owner = host.split('.')[0];
+    const firstSeg = (location.pathname || '').split('/').filter(Boolean)[0];
+    if (firstSeg && !/\.html?$/i.test(firstSeg)) return `${owner}/${firstSeg}`;
+    return `${owner}/${host}`;
+  } catch (e) {
+    return '';
+  }
+}
+const INFERRED_REPO = inferRepoFromLocation();
+const DEFAULT_REPO = INFERRED_REPO || 'OWNER/REPO';
 
 let allRounds = [];
 let charts = {};
+
+function safeStorageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    return null;
+  }
+}
+
+function safeStorageSet(key, val) {
+  try {
+    localStorage.setItem(key, val);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function safeStorageRemove(key) {
+  try {
+    localStorage.removeItem(key);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function getTodayIsoDate() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function formatSignedDiff(val, decimals = 1, unit = '') {
+  if (val === null || val === undefined || Number.isNaN(Number(val))) return '—';
+  const num = Number(val);
+  const rounded = Number(num.toFixed(decimals));
+  const absRounded = Math.abs(rounded);
+  if (absRounded === 0) {
+    return `${(0).toFixed(decimals)}${unit}`;
+  }
+  const sign = rounded > 0 ? '+' : '-';
+  return `${sign}${absRounded.toFixed(decimals)}${unit}`;
+}
+
+function formatDeltaBadge(diff, decimals = 1, unit = '') {
+  const num = Number(diff);
+  const rounded = Number(num.toFixed(decimals));
+  if (Math.abs(rounded) < (decimals === 2 ? 0.01 : 0.05)) {
+    return `±${(0).toFixed(decimals)}${unit}`;
+  }
+  return rounded > 0 ? `+${rounded.toFixed(decimals)}${unit}` : `${rounded.toFixed(decimals)}${unit}`;
+}
 
 // --- Pure JS Garmin .FIT Binary Parser ---
 const FIT_EPOCH_MS = Date.UTC(1989, 11, 31, 0, 0, 0);
@@ -739,69 +902,167 @@ function parseFitBuffer(arrayBuffer, fileName) {
 }
 
 // --- Storage & State Management ---
+function normalizeHole(h) {
+  const strokes = (h.strokes !== null && h.strokes !== undefined) ? Number(h.strokes) : null;
+  const putts = (h.putts !== null && h.putts !== undefined) ? Number(h.putts) : null;
+  const par = Number(h.par) || 4;
+  let stdGir = false;
+  if (strokes !== null && !Number.isNaN(strokes) && putts !== null && !Number.isNaN(putts)) {
+    if (putts > 0 && (strokes - putts) <= (par - 2)) stdGir = true;
+    else if (putts === 0 && strokes <= (par - 2)) stdGir = true;
+  }
+
+  const hasKnownPutts = putts !== null && !Number.isNaN(putts);
+  const hasKnownStrokes = strokes !== null && !Number.isNaN(strokes);
+
+  const upAndDownAttempt = !stdGir && hasKnownPutts;
+  const upAndDownMade = upAndDownAttempt && putts <= 1;
+
+  const scrambleAttempt = !stdGir && hasKnownStrokes;
+  const scrambleMade = scrambleAttempt && strokes <= par;
+
+  return {
+    ...h,
+    par,
+    strokes,
+    putts,
+    penalties: Number(h.penalties) || 0,
+    stdGir,
+    upAndDownAttempt,
+    upAndDownMade,
+    scrambleAttempt,
+    scrambleMade
+  };
+}
+
 function normalizeRound(r) {
-  const holes = (r.holes || []).map(h => {
-    let stdGir = false;
-    if (h.strokes !== null && h.strokes !== undefined && h.putts !== null && h.putts !== undefined) {
-      if (h.putts > 0 && (h.strokes - h.putts) <= (h.par - 2)) stdGir = true;
-      else if (h.putts === 0 && h.strokes <= (h.par - 2)) stdGir = true;
-    }
-    return { ...h, penalties: Number(h.penalties) || 0, stdGir };
-  });
+  const holes = (r.holes || []).map(normalizeHole);
   return { ...r, holes };
 }
 
 function loadInitialData() {
-  const saved = localStorage.getItem(STORAGE_KEY);
+  const saved = safeStorageGet(STORAGE_KEY);
   if (saved) {
     try {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed) && parsed.length > 0) {
         allRounds = parsed.map(normalizeRound);
         allRounds.sort((a, b) => a.date.localeCompare(b.date));
-        updateStatus(`<strong>Active Dataset:</strong> ${allRounds.length} rounds loaded.`);
+        updateStatus(`<strong>Active Dataset:</strong> ${allRounds.length} rounds loaded from local cache.`);
         return;
       }
     } catch (e) {}
   }
   allRounds = STARTER_ROUNDS.map(normalizeRound);
-  updateStatus(`<strong>Ready:</strong> 0 rounds locally. Import <code>.fit</code>/<code>.json</code> or connect <strong>Cloud Sync</strong>.`);
+  updateStatus(`<strong>Ready:</strong> 0 rounds in local cache.`);
 }
 
 function saveData() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(allRounds));
+  safeStorageSet(STORAGE_KEY, JSON.stringify(allRounds));
 }
 
 function updateStatus(html) {
-  document.getElementById('dataStatusText').innerHTML = html;
+  const el = document.getElementById('dataStatusText');
+  if (el) el.innerHTML = html;
 }
 
 function updateCloudStatus(html, isConnected = null) {
-  document.getElementById('cloudStatusText').innerHTML = html;
+  const el = document.getElementById('cloudStatusText');
+  if (el) el.innerHTML = html;
   const btn = document.getElementById('syncSettingsBtn');
-  if (isConnected === true) {
-    btn.classList.add('connected');
-    btn.textContent = '☁️ Synced';
-  } else if (isConnected === false) {
-    btn.classList.remove('connected');
-    btn.textContent = '☁️ Cloud Sync';
+  if (btn) {
+    if (isConnected === true) {
+      btn.classList.add('connected');
+      btn.textContent = '☁️ Synced';
+    } else if (isConnected === false) {
+      btn.classList.remove('connected');
+      btn.textContent = '☁️ Cloud Sync';
+    }
   }
 }
 
-// --- GitHub Private Repo Sync Engine ---
-function getSyncConfig() {
+// Visible to everyone (visitors included), unlike the owner-only status boxes.
+function setPublicStatus(text, isError = false) {
+  const el = document.getElementById('publicStatusText');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('error', Boolean(isError));
+}
+
+// --- Pending rounds (imported on this device but not yet visible in the published rounds.json) ---
+function getPendingIds() {
+  const raw = safeStorageGet(PENDING_KEY);
+  if (!raw) return new Set();
   try {
-    const raw = localStorage.getItem(SYNC_CFG_KEY);
-    if (raw) {
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function savePendingIds(set) {
+  safeStorageSet(PENDING_KEY, JSON.stringify(Array.from(set)));
+}
+
+function markPending(ids) {
+  if (!ids || !ids.length) return;
+  const set = getPendingIds();
+  ids.forEach(id => set.add(id));
+  savePendingIds(set);
+}
+
+// --- Date Filter Persistence ---
+function loadDateFilters() {
+  const today = getTodayIsoDate();
+  let dateFrom = '';
+  let toToday = true;
+  let dateTo = today;
+
+  const raw = safeStorageGet(FILTER_DATES_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed.dateFrom === 'string') dateFrom = parsed.dateFrom;
+      if (typeof parsed.toToday === 'boolean') toToday = parsed.toToday;
+      dateTo = toToday ? today : (typeof parsed.dateTo === 'string' ? parsed.dateTo : today);
+    } catch (e) {}
+  }
+
+  document.getElementById('dateFrom').value = dateFrom;
+  document.getElementById('toTodayCheckbox').checked = toToday;
+  document.getElementById('dateTo').value = dateTo;
+}
+
+function saveDateFilters() {
+  const dateFrom = document.getElementById('dateFrom').value || '';
+  const toToday = document.getElementById('toTodayCheckbox').checked;
+  const dateTo = toToday ? getTodayIsoDate() : (document.getElementById('dateTo').value || '');
+  safeStorageSet(FILTER_DATES_KEY, JSON.stringify({ dateFrom, toToday, dateTo }));
+}
+
+// --- GitHub Owner Config & Public Read-Only Loader ---
+function getSyncConfig() {
+  const raw = safeStorageGet(SYNC_CFG_KEY);
+  if (raw) {
+    try {
       const cfg = JSON.parse(raw);
       return { repo: cfg.repo || DEFAULT_REPO, token: cfg.token || '' };
-    }
-  } catch (e) {}
+    } catch (e) {}
+  }
   return { repo: DEFAULT_REPO, token: '' };
 }
 
 function saveSyncConfig(repo, token) {
-  localStorage.setItem(SYNC_CFG_KEY, JSON.stringify({ repo: repo.trim(), token: token.trim() }));
+  safeStorageSet(SYNC_CFG_KEY, JSON.stringify({
+    repo: (repo || '').trim() || DEFAULT_REPO,
+    token: (token || '').trim()
+  }));
+}
+
+function applyOwnerVisibility() {
+  const hasToken = Boolean(getSyncConfig().token);
+  document.body.classList.toggle('is-owner', hasToken);
 }
 
 function utf8ToBase64(str) {
@@ -818,7 +1079,18 @@ function base64ToUtf8(b64) {
   return new TextDecoder().decode(bytes);
 }
 
-async function fetchRemoteRounds(cfg) {
+// Public read-only loader: reads rounds.json from the site itself with no token or Authorization header.
+async function fetchPublicRounds() {
+  const url = `${DATA_PATH}?t=${Date.now()}`;
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) {
+    throw new Error(`Could not load ${DATA_PATH} (HTTP ${res.status})`);
+  }
+  const parsed = await res.json();
+  return Array.isArray(parsed) ? parsed : (parsed.rounds || []);
+}
+
+async function fetchRepoContentsMeta(cfg) {
   const url = `https://api.github.com/repos/${cfg.repo}/contents/${DATA_PATH}?t=${Date.now()}`;
   const res = await fetch(url, {
     headers: {
@@ -841,10 +1113,10 @@ async function fetchRemoteRounds(cfg) {
   return { exists: true, sha: data.sha, rounds: arr };
 }
 
-async function pushRemoteRounds(cfg, roundsArr, sha) {
+async function putRepoRounds(cfg, roundsArr, sha) {
   const url = `https://api.github.com/repos/${cfg.repo}/contents/${DATA_PATH}`;
   const payload = {
-    message: `Sync ${roundsArr.length} golf rounds (${new Date().toISOString().slice(0, 16)}Z)`,
+    message: `Update ${roundsArr.length} golf rounds (${new Date().toISOString().slice(0, 16)}Z)`,
     content: utf8ToBase64(JSON.stringify(roundsArr, null, 2))
   };
   if (sha) payload.sha = sha;
@@ -860,64 +1132,151 @@ async function pushRemoteRounds(cfg, roundsArr, sha) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || `GitHub Push HTTP ${res.status}`);
+    const msg = err.message || `GitHub Push HTTP ${res.status}`;
+    const error = new Error(msg);
+    error.status = res.status;
+    throw error;
   }
   return await res.json();
 }
 
-async function syncWithGitHub({ pushOnly = false, silent = false } = {}) {
-  const cfg = getSyncConfig();
-  if (!cfg.token) {
-    updateCloudStatus('☁️ <strong>Cloud Sync:</strong> Click <strong>Cloud Sync</strong> above to connect your private <code>golfdata</code> repo.', false);
-    return;
-  }
-
-  const modalMsg = document.getElementById('syncModalStatus');
-  if (!silent && modalMsg) modalMsg.textContent = 'Connecting to GitHub...';
-  updateCloudStatus('☁️ <strong>Cloud Sync:</strong> Syncing with GitHub...', true);
-
+async function pushRoundsWithConflictRetry(cfg, roundsArr, initialSha = null) {
+  let sha = initialSha;
   try {
-    const remote = await fetchRemoteRounds(cfg);
-    if (pushOnly) {
-      await pushRemoteRounds(cfg, allRounds, remote.sha);
-      const msg = `Pushed ${allRounds.length} rounds to ${cfg.repo}.`;
-      if (modalMsg) modalMsg.textContent = `✓ ${msg}`;
-      updateCloudStatus(`☁️ <strong>Cloud Synced:</strong> ${allRounds.length} rounds backed up in <code>${cfg.repo}</code>.`, true);
-      return;
-    }
+    return await putRepoRounds(cfg, roundsArr, sha);
+  } catch (err) {
+    const isConflict = err.status === 409 || err.status === 422 || /sha|conflict|does not match/i.test(err.message || '');
+    if (!isConflict) throw err;
+    const latest = await fetchRepoContentsMeta(cfg);
+    return await putRepoRounds(cfg, roundsArr, latest.sha);
+  }
+}
 
-    const mergedMap = new Map();
-    remote.rounds.forEach(r => { if (r && r.id) mergedMap.set(r.id, normalizeRound(r)); });
-    let localHadNewer = !remote.exists;
+// Visitors see exactly what the published rounds.json contains. On owner devices, rounds
+// imported here that are still waiting to be published are kept until the file catches up,
+// so reloading straight after an import never drops them.
+async function loadPublicDataset({ silent = false } = {}) {
+  const modalMsg = document.getElementById('syncModalStatus');
+  setPublicStatus('Loading rounds…');
+  try {
+    const remoteRounds = await fetchPublicRounds();
+    const remoteMap = new Map();
+    remoteRounds
+      .filter(r => r && r.id && Array.isArray(r.holes))
+      .forEach(r => remoteMap.set(r.id, normalizeRound(r)));
+
+    const pending = getPendingIds();
+    remoteMap.forEach((_, id) => pending.delete(id));
+    savePendingIds(pending);
+
+    let stillPublishing = 0;
     allRounds.forEach(r => {
-      if (r && r.id && !mergedMap.has(r.id)) {
-        mergedMap.set(r.id, normalizeRound(r));
-        localHadNewer = true;
+      if (r && r.id && pending.has(r.id) && !remoteMap.has(r.id)) {
+        remoteMap.set(r.id, normalizeRound(r));
+        stillPublishing++;
       }
     });
 
-    const merged = Array.from(mergedMap.values()).sort((a, b) => a.date.localeCompare(b.date));
-    const pulledCount = merged.length - allRounds.length;
-    allRounds = merged;
+    allRounds = Array.from(remoteMap.values()).sort((a, b) => a.date.localeCompare(b.date));
     saveData();
     populateCourseFilter();
     refreshDashboard();
-    updateStatus(`<strong>Active Dataset:</strong> ${allRounds.length} rounds loaded.`);
-
-    if (localHadNewer) {
-      await pushRemoteRounds(cfg, allRounds, remote.sha);
-    }
+    updateStatus(`<strong>Active Dataset:</strong> ${allRounds.length} rounds loaded from <code>${DATA_PATH}</code>.`);
 
     const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const summary = pulledCount > 0
-      ? `Pulled ${pulledCount} new round(s) from cloud (${allRounds.length} total) at ${nowStr}.`
-      : `Up to date with ${cfg.repo} (${allRounds.length} rounds) at ${nowStr}.`;
-    if (modalMsg) modalMsg.textContent = `✓ ${summary}`;
-    updateCloudStatus(`☁️ <strong>Cloud Synced:</strong> ${summary}`, true);
+    const pubNote = stillPublishing
+      ? ` ${stillPublishing} round(s) from this device are still publishing.`
+      : '';
+    setPublicStatus(`${allRounds.length} rounds loaded at ${nowStr}.${pubNote}`);
+    updateCloudStatus(`☁️ <strong>Published Data:</strong> ${allRounds.length} rounds loaded at ${nowStr}.${pubNote}`, Boolean(getSyncConfig().token));
+    if (!silent && modalMsg) {
+      modalMsg.textContent = `✓ Loaded ${allRounds.length} rounds from ${DATA_PATH}.`;
+    }
   } catch (err) {
-    const errText = `Sync error: ${err.message}`;
-    if (modalMsg) modalMsg.textContent = `✕ ${errText}`;
-    updateCloudStatus(`☁️ <strong>Sync Error:</strong> ${err.message} (Check token in <strong>Cloud Sync</strong>)`, false);
+    const fileHint = (typeof location !== 'undefined' && location.protocol === 'file:')
+      ? ' Open this page from its GitHub Pages address, not as a local file.'
+      : '';
+    const cachedCount = allRounds.length;
+    if (cachedCount > 0) {
+      setPublicStatus(`Could not refresh ${DATA_PATH} (${err.message}). Showing ${cachedCount} saved round(s).${fileHint}`, true);
+      updateStatus(`<strong>Cached Dataset:</strong> ${cachedCount} local round(s) shown — could not refresh <code>${DATA_PATH}</code> (${err.message}).`);
+      updateCloudStatus(`☁️ <strong>Read Warning:</strong> ${err.message} (showing cached rounds).`, Boolean(getSyncConfig().token));
+    } else {
+      setPublicStatus(`Unable to load rounds: ${err.message}. Check that ${DATA_PATH} exists next to index.html.${fileHint}`, true);
+      updateStatus(`<strong>Unable to Load Rounds:</strong> ${err.message}. Check that <code>${DATA_PATH}</code> exists next to <code>index.html</code>.`);
+      updateCloudStatus(`☁️ <strong>Load Error:</strong> ${err.message}.`, false);
+    }
+    if (!silent && modalMsg) {
+      modalMsg.textContent = `✕ ${err.message}`;
+    }
+  }
+}
+
+async function appendImportedRoundsToCloud(importedRounds) {
+  const cfg = getSyncConfig();
+  if (!cfg.token || !importedRounds.length) return;
+  const modalMsg = document.getElementById('syncModalStatus');
+  updateCloudStatus('☁️ <strong>Cloud Sync:</strong> Pushing new round(s) to GitHub...', true);
+
+  try {
+    const meta = await fetchRepoContentsMeta(cfg);
+    const mergedMap = new Map();
+    meta.rounds.forEach(r => { if (r && r.id) mergedMap.set(r.id, normalizeRound(r)); });
+    importedRounds.forEach(r => { if (r && r.id) mergedMap.set(r.id, normalizeRound(r)); });
+    const mergedList = Array.from(mergedMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+
+    await pushRoundsWithConflictRetry(cfg, mergedList, meta.sha);
+    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    updateCloudStatus(`☁️ <strong>Cloud Synced:</strong> Pushed ${importedRounds.length} new round(s) (${mergedList.length} total) to <code>${cfg.repo}</code> at ${nowStr}.`, true);
+    if (modalMsg) modalMsg.textContent = `✓ Pushed ${importedRounds.length} new round(s) to ${cfg.repo}.`;
+  } catch (err) {
+    updateCloudStatus(`☁️ <strong>Cloud Push Error:</strong> ${err.message} (Round saved locally on this device).`, true);
+    if (modalMsg) modalMsg.textContent = `✕ Push error: ${err.message}`;
+  }
+}
+
+async function replaceAllCloudDataWithLocal() {
+  const cfg = getSyncConfig();
+  if (!cfg.token) return;
+  const modalMsg = document.getElementById('syncModalStatus');
+
+  let cloudCount = 0;
+  let cloudSha = null;
+  let fetchedCloudCount = false;
+
+  try {
+    const meta = await fetchRepoContentsMeta(cfg);
+    cloudCount = meta.rounds.length;
+    cloudSha = meta.sha;
+    fetchedCloudCount = true;
+  } catch (err) {
+    cloudCount = 0;
+  }
+
+  const localCount = allRounds.length;
+  const cloudLabel = fetchedCloudCount ? `${cloudCount}` : 'an unknown number of';
+  const confirmed = confirm(
+    `Replace all cloud data in ${cfg.repo}/${DATA_PATH}?\n\n` +
+    `This will overwrite ${cloudLabel} cloud round(s) with your ${localCount} local round(s).`
+  );
+  if (!confirmed) return;
+
+  updateCloudStatus('☁️ <strong>Cloud Sync:</strong> Replacing cloud rounds...', true);
+  if (modalMsg) modalMsg.textContent = 'Replacing cloud rounds...';
+
+  try {
+    const sortedLocal = [...allRounds].map(normalizeRound).sort((a, b) => a.date.localeCompare(b.date));
+    await pushRoundsWithConflictRetry(cfg, sortedLocal, cloudSha);
+    markPending(sortedLocal.map(r => r.id));
+    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const msg = `Replaced cloud data in ${cfg.repo} with ${sortedLocal.length} local round(s) at ${nowStr}.`;
+    updateCloudStatus(`☁️ <strong>Cloud Synced:</strong> ${msg}`, true);
+    if (modalMsg) modalMsg.textContent = `✓ ${msg}`;
+    updateStatus(`<strong>Active Dataset:</strong> ${allRounds.length} rounds (cloud overwritten with local dataset).`);
+  } catch (err) {
+    const errMsg = `Replace failed: ${err.message}`;
+    updateCloudStatus(`☁️ <strong>Cloud Error:</strong> ${errMsg}`, true);
+    if (modalMsg) modalMsg.textContent = `✕ ${errMsg}`;
   }
 }
 
@@ -925,7 +1284,8 @@ async function handleFiles(fileList) {
   const files = Array.from(fileList);
   if (!files.length) return;
   const existingIds = new Set(allRounds.map(r => r.id));
-  let added = 0, skipped = 0;
+  const newlyAdded = [];
+  let skipped = 0;
 
   for (const file of files) {
     if (file.name.toLowerCase().endsWith('.fit')) {
@@ -933,9 +1293,10 @@ async function handleFiles(fileList) {
       const round = parseFitBuffer(buf, file.name);
       if (round) {
         if (!existingIds.has(round.id)) {
-          allRounds.push(normalizeRound(round));
+          const norm = normalizeRound(round);
+          allRounds.push(norm);
+          newlyAdded.push(norm);
           existingIds.add(round.id);
-          added++;
         } else {
           skipped++;
         }
@@ -947,9 +1308,10 @@ async function handleFiles(fileList) {
         const arr = Array.isArray(parsed) ? parsed : (parsed.rounds || []);
         for (const r of arr) {
           if (r && r.holes && !existingIds.has(r.id)) {
-            allRounds.push(normalizeRound(r));
+            const norm = normalizeRound(r);
+            allRounds.push(norm);
+            newlyAdded.push(norm);
             existingIds.add(r.id);
-            added++;
           } else if (r && r.holes) {
             skipped++;
           }
@@ -959,34 +1321,43 @@ async function handleFiles(fileList) {
   }
 
   allRounds.sort((a, b) => a.date.localeCompare(b.date));
+  markPending(newlyAdded.map(r => r.id));
   saveData();
   populateCourseFilter();
   refreshDashboard();
-  updateStatus(`<strong>Import Complete:</strong> Added <strong>${added}</strong> new round(s)${skipped ? ` (${skipped} duplicate(s) skipped)` : ''}. Total stored: <strong>${allRounds.length}</strong> rounds.`);
+  updateStatus(
+    `<strong>Import Complete:</strong> Added <strong>${newlyAdded.length}</strong> new round(s)` +
+    `${skipped ? ` (${skipped} duplicate(s) skipped)` : ''}. Shown immediately on this device; ` +
+    `public GitHub Pages may take a minute or two to republish.`
+  );
 
-  if (added > 0 && getSyncConfig().token) {
-    await syncWithGitHub({ silent: true });
+  if (newlyAdded.length > 0 && getSyncConfig().token) {
+    await appendImportedRoundsToCloud(newlyAdded);
   }
 }
 
 // --- Enrich Round Stats ---
 function enrichRound(r) {
-  const girCount = r.holes.filter(h => h.stdGir).length;
-  const puttsKnown = r.holes.filter(h => h.putts !== null && h.putts !== undefined);
-  const totalPutts = puttsKnown.reduce((s, h) => s + h.putts, 0);
-  const penalties = r.holes.reduce((s, h) => s + (Number(h.penalties) || 0), 0);
+  const norm = normalizeRound(r);
+  const girCount = norm.holes.filter(h => h.stdGir).length;
+  const puttsKnown = norm.holes.filter(h => h.putts !== null && h.putts !== undefined && !Number.isNaN(Number(h.putts)));
+  const totalPutts = puttsKnown.reduce((s, h) => s + Number(h.putts), 0);
+  const penalties = norm.holes.reduce((s, h) => s + (Number(h.penalties) || 0), 0);
 
-  const missedGirHoles = r.holes.filter(h => !h.stdGir && h.strokes !== null && h.strokes !== undefined);
-  const upAndDownMade = missedGirHoles.filter(h => h.strokes <= h.par).length;
-  const upAndDownOpps = missedGirHoles.length;
-  const upAndDownPct = upAndDownOpps ? Number(((upAndDownMade / upAndDownOpps) * 100).toFixed(1)) : 0;
+  const upDownAtt = norm.holes.filter(h => h.upAndDownAttempt).length;
+  const upDownMade = norm.holes.filter(h => h.upAndDownMade).length;
+  const upDownPct = upDownAtt ? Number(((upDownMade / upDownAtt) * 100).toFixed(1)) : null;
 
-  const firOpps = r.holes.filter(h => h.par >= 4 && h.fir !== 'NA');
+  const scrambleAtt = norm.holes.filter(h => h.scrambleAttempt).length;
+  const scrambleMade = norm.holes.filter(h => h.scrambleMade).length;
+  const scramblePct = scrambleAtt ? Number(((scrambleMade / scrambleAtt) * 100).toFixed(1)) : null;
+
+  const firOpps = norm.holes.filter(h => h.par >= 4 && h.fir !== 'NA');
   const firHits = firOpps.filter(h => h.fir === 'HIT').length;
   const firPct = firOpps.length ? Number(((firHits / firOpps.length) * 100).toFixed(1)) : null;
 
   let albatross = 0, eagles = 0, birdies = 0, pars = 0, bogeys = 0, dblPlus = 0;
-  r.holes.forEach(h => {
+  norm.holes.forEach(h => {
     if (h.strokes === null || h.strokes === undefined) return;
     const diff = h.strokes - h.par;
     if (diff <= -3) albatross++;
@@ -999,21 +1370,24 @@ function enrichRound(r) {
 
   const parAvg = {};
   [3, 4, 5].forEach(p => {
-    const sub = r.holes.filter(h => h.par === p && h.strokes !== null && h.strokes !== undefined);
+    const sub = norm.holes.filter(h => h.par === p && h.strokes !== null && h.strokes !== undefined);
     parAvg[p] = sub.length ? sub.reduce((s, h) => s + (h.strokes - h.par), 0) / sub.length : null;
   });
 
   return {
-    ...r,
-    toPar: r.gross - r.par,
+    ...norm,
+    toPar: norm.gross - norm.par,
     girCount,
-    girPct: Number(((girCount / r.holesCount) * 100).toFixed(1)),
+    girPct: Number(((girCount / (norm.holesCount || 1)) * 100).toFixed(1)),
     putts: totalPutts,
     penalties,
-    hasPutts: puttsKnown.length >= Math.floor(r.holesCount * 0.8),
-    upAndDownMade,
-    upAndDownOpps,
-    upAndDownPct,
+    hasPutts: puttsKnown.length >= Math.floor((norm.holesCount || 1) * 0.8),
+    upDownAtt,
+    upDownMade,
+    upDownPct,
+    scrambleAtt,
+    scrambleMade,
+    scramblePct,
     firHits,
     firOpps: firOpps.length,
     firPct,
@@ -1059,14 +1433,10 @@ function getFilteredData() {
     r.holes.forEach(h => {
       if (parFilter !== 'ALL' && String(h.par) !== parFilter) return;
       if (firFilter !== 'ALL' && h.fir !== firFilter) return;
-      const isUpAndDownOpp = !h.stdGir && h.strokes !== null && h.strokes !== undefined;
-      const isUpAndDownMade = isUpAndDownOpp && h.strokes <= h.par;
       filteredHoles.push({
         date: r.date,
         course: r.course,
         tee: r.tee,
-        isUpAndDownOpp,
-        isUpAndDownMade,
         ...h
       });
     });
@@ -1109,7 +1479,7 @@ function renderComparisonPanel(rounds) {
   const grid = document.getElementById('compareGrid');
   const sub = document.getElementById('compareSubtitle');
   if (!rounds.length) {
-    sub.textContent = 'Import your Garmin scorecards or connect Cloud Sync to compare your latest round against your historical baseline.';
+    sub.textContent = 'No rounds in current filter to compare against historical averages.';
     grid.innerHTML = '';
     return;
   }
@@ -1145,10 +1515,18 @@ function renderComparisonPanel(rounds) {
   sub.textContent = `Comparing ${target.date} at ${target.course} against your average across ${modeLabel}`;
 
   const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const poolRatePct = (madeKey, attKey) => {
+    const attSum = pool.reduce((s, r) => s + (r[attKey] || 0), 0);
+    if (!attSum) return null;
+    const madeSum = pool.reduce((s, r) => s + (r[madeKey] || 0), 0);
+    return (madeSum / attSum) * 100;
+  };
+
   const baseGross = avg(pool.map(r => r.gross));
   const baseToPar = avg(pool.map(r => r.toPar));
   const baseGir = avg(pool.map(r => r.girPct));
-  const baseUd = avg(pool.map(r => r.upAndDownPct));
+  const baseUpDown = poolRatePct('upDownMade', 'upDownAtt');
+  const baseScramble = poolRatePct('scrambleMade', 'scrambleAtt');
   const puttPool = pool.filter(r => r.hasPutts);
   const basePutts = puttPool.length ? avg(puttPool.map(r => r.putts)) : null;
   const basePenalties = avg(pool.map(r => r.penalties));
@@ -1168,24 +1546,24 @@ function renderComparisonPanel(rounds) {
 
   function makeCard(label, val, base, unit, lowerIsBetter, decimals = 1, signed = false) {
     if (val === null || val === undefined || base === null || base === undefined) {
-      return `<div class="cmp-card"><div class="cmp-label">${label}</div><div class="cmp-row"><span class="cmp-val">—</span></div><div class="cmp-base">Insufficient data</div></div>`;
+      return `<div class="cmp-card"><div class="cmp-label">${label}</div><div class="cmp-row"><span class="cmp-val">n/a</span></div><div class="cmp-base">No opportunities</div></div>`;
     }
     const diff = val - base;
     const absDiff = Math.abs(diff);
-    const fmtVal = (signed && val > 0 ? '+' : '') + val.toFixed(decimals) + unit;
-    const fmtBase = (signed && base > 0 ? '+' : '') + base.toFixed(decimals) + unit;
+    const fmtVal = signed ? formatSignedDiff(val, decimals, unit) : `${val.toFixed(decimals)}${unit}`;
+    const fmtBase = signed ? formatSignedDiff(base, decimals, unit) : `${base.toFixed(decimals)}${unit}`;
     let cls = 'delta-neutral';
-    if (absDiff >= 0.05) {
+    const threshold = decimals === 2 ? 0.01 : 0.05;
+    if (absDiff >= threshold) {
       const isGood = lowerIsBetter ? diff < 0 : diff > 0;
       cls = isGood ? 'delta-good' : 'delta-bad';
     }
-    const signStr = diff > 0.04 ? '+' : (diff < -0.04 ? '' : '±');
     return `
       <div class="cmp-card">
         <div class="cmp-label">${label}</div>
         <div class="cmp-row">
           <span class="cmp-val">${fmtVal}</span>
-          <span class="delta-badge ${cls}">${signStr}${diff.toFixed(decimals)}${unit}</span>
+          <span class="delta-badge ${cls}">${formatDeltaBadge(diff, decimals, unit)}</span>
         </div>
         <div class="cmp-base">Hist. avg: <strong>${fmtBase}</strong></div>
       </div>
@@ -1197,7 +1575,8 @@ function renderComparisonPanel(rounds) {
     makeCard('Gross Score', target.gross, baseGross, '', true, 1, false),
     makeCard('Score to Par', target.toPar, baseToPar, '', true, 1, true),
     makeCard('GIR %', target.girPct, baseGir, '%', false, 1, false),
-    makeCard('Up & Down %', target.upAndDownPct, baseUd, '%', false, 1, false),
+    makeCard('Up & Down %', target.upDownPct, baseUpDown, '%', false, 1, false),
+    makeCard('Scramble %', target.scramblePct, baseScramble, '%', false, 1, false),
     makeCard('Putts / Round', target.hasPutts ? target.putts : null, basePutts, '', true, 1, false),
     makeCard('Penalties / Round', target.penalties, basePenalties, '', true, 1, false),
     makeCard('Fairways Hit %', target.firPct, baseFir, '%', false, 1, false),
@@ -1214,12 +1593,12 @@ function renderComparisonPanel(rounds) {
 function renderKPIs(rounds, holes) {
   const grid = document.getElementById('kpiGrid');
   if (!rounds.length) {
-    grid.innerHTML = '<div class="kpi-card"><div class="kpi-label">No Rounds Loaded</div><div class="kpi-sub">Click <strong>Import .FIT / JSON</strong> or connect <strong>Cloud Sync</strong> above</div></div>';
+    grid.innerHTML = '<div class="kpi-card"><div class="kpi-label">No Rounds in View</div><div class="kpi-sub">Adjust the filters above, or check the status line under the title if rounds failed to load</div></div>';
     return;
   }
   const n = rounds.length;
   const avgGross = (rounds.reduce((s, r) => s + r.gross, 0) / n).toFixed(1);
-  const avgToPar = (rounds.reduce((s, r) => s + r.toPar, 0) / n).toFixed(1);
+  const avgToPar = formatSignedDiff(rounds.reduce((s, r) => s + r.toPar, 0) / n, 1);
   const bestGross = Math.min(...rounds.map(r => r.gross));
 
   const totalHoles = holes.length || 1;
@@ -1227,24 +1606,28 @@ function renderKPIs(rounds, holes) {
   const girPct = ((girs / totalHoles) * 100).toFixed(1);
   const avgGirsPerRound = (girs / n).toFixed(1);
 
-  const udOpps = holes.filter(h => h.isUpAndDownOpp).length;
-  const udMade = holes.filter(h => h.isUpAndDownMade).length;
-  const udPct = udOpps ? ((udMade / udOpps) * 100).toFixed(1) : '—';
+  const udAtt = holes.filter(h => h.upAndDownAttempt).length;
+  const udMade = holes.filter(h => h.upAndDownMade).length;
+  const udPct = udAtt ? `${((udMade / udAtt) * 100).toFixed(1)}%` : 'n/a';
+
+  const scrAtt = holes.filter(h => h.scrambleAttempt).length;
+  const scrMade = holes.filter(h => h.scrambleMade).length;
+  const scrPct = scrAtt ? `${((scrMade / scrAtt) * 100).toFixed(1)}%` : 'n/a';
 
   const puttRounds = rounds.filter(r => r.hasPutts);
-  const avgPutts = puttRounds.length ? (puttRounds.reduce((s, r) => s + r.putts, 0) / puttRounds.length).toFixed(1) : '—';
+  const avgPutts = puttRounds.length ? (puttRounds.reduce((s, r) => s + r.putts, 0) / puttRounds.length).toFixed(1) : 'n/a';
 
   const totalPenalties = rounds.reduce((s, r) => s + (r.penalties || 0), 0);
   const avgPenalties = (totalPenalties / n).toFixed(1);
 
   const firOpps = holes.filter(h => h.par >= 4 && h.fir !== 'NA');
   const firHits = firOpps.filter(h => h.fir === 'HIT').length;
-  const firPct = firOpps.length ? ((firHits / firOpps.length) * 100).toFixed(1) : '—';
+  const firPct = firOpps.length ? `${((firHits / firOpps.length) * 100).toFixed(1)}%` : 'n/a';
 
   grid.innerHTML = `
     <div class="kpi-card">
       <div class="kpi-label">Scoring Average (${n} Rounds)</div>
-      <div class="kpi-value">${avgGross} <span style="font-size:1rem;color:var(--text-muted)">(+${avgToPar})</span></div>
+      <div class="kpi-value">${avgGross} <span style="font-size:1rem;color:var(--text-muted)">(${avgToPar})</span></div>
       <div class="kpi-sub">Best round in view: <strong>${bestGross}</strong></div>
     </div>
     <div class="kpi-card">
@@ -1252,10 +1635,15 @@ function renderKPIs(rounds, holes) {
       <div class="kpi-value highlight-green">${girPct}%</div>
       <div class="kpi-sub"><strong>${girs}</strong> / ${holes.length} holes (${avgGirsPerRound} per round)</div>
     </div>
+    <div class="kpi-card" title="Up & Down requires a missed GIR with known putts (putts <= 1). Holes with missing putts data are excluded.">
+      <div class="kpi-label">Up &amp; Down %</div>
+      <div class="kpi-value highlight-cyan">${udPct}</div>
+      <div class="kpi-sub"><strong>${udMade}</strong> / ${udAtt} missed GIRs (putts &le; 1)</div>
+    </div>
     <div class="kpi-card">
-      <div class="kpi-label">Up &amp; Down % (Scrambling)</div>
-      <div class="kpi-value highlight-amber">${udPct}%</div>
-      <div class="kpi-sub"><strong>${udMade}</strong> / ${udOpps} missed GIRs saved for par+</div>
+      <div class="kpi-label">Scramble %</div>
+      <div class="kpi-value highlight-amber">${scrPct}</div>
+      <div class="kpi-sub"><strong>${scrMade}</strong> / ${scrAtt} missed GIRs saved for par+</div>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">Average Putts / Round</div>
@@ -1269,7 +1657,7 @@ function renderKPIs(rounds, holes) {
     </div>
     <div class="kpi-card">
       <div class="kpi-label">Fairways Hit %</div>
-      <div class="kpi-value">${firPct}%</div>
+      <div class="kpi-value">${firPct}</div>
       <div class="kpi-sub"><strong>${firHits}</strong> / ${firOpps.length} Par 4 &amp; 5 tee shots</div>
     </div>
   `;
@@ -1412,10 +1800,22 @@ function renderCharts(rounds, holes) {
   });
 }
 
+function getRelativeToParPillClass(toPar, holesCount) {
+  const scale = (holesCount || 18) / 18;
+  const greenMax = 12 * scale;
+  const amberMax = 20 * scale;
+  if (toPar <= greenMax) return 'pill-green';
+  if (toPar <= amberMax) return 'pill-amber';
+  return 'pill-rose';
+}
+
 function renderRoundsTable(rounds) {
   const tbody = document.getElementById('roundsTableBody');
   const sorted = [...rounds].sort((a, b) => b.date.localeCompare(a.date));
   tbody.innerHTML = sorted.map(r => {
+    const udCell = r.upDownAtt ? `${r.upDownMade}/${r.upDownAtt} (${r.upDownPct}%)` : 'n/a';
+    const scrCell = r.scrambleAtt ? `${r.scrambleMade}/${r.scrambleAtt} (${r.scramblePct}%)` : 'n/a';
+    const pillCls = getRelativeToParPillClass(r.toPar, r.holesCount);
     return `
       <tr style="cursor:pointer;" onclick="openRoundModal('${r.id}')">
         <td><strong>${r.date}</strong></td>
@@ -1423,10 +1823,11 @@ function renderRoundsTable(rounds) {
         <td>${r.tee}</td>
         <td>${r.par}</td>
         <td><strong>${r.gross}</strong></td>
-        <td><span class="pill ${r.toPar <= 12 ? 'pill-green' : r.toPar <= 20 ? 'pill-amber' : 'pill-rose'}">+${r.toPar}</span></td>
+        <td><span class="pill ${pillCls}">${formatSignedDiff(r.toPar, 0)}</span></td>
         <td>${r.outScore ?? '—'} / ${r.inScore ?? '—'}</td>
         <td><span class="pill pill-green">${r.girCount}/${r.holesCount} (${r.girPct}%)</span></td>
-        <td>${r.upAndDownMade}/${r.upAndDownOpps} (${r.upAndDownPct}%)</td>
+        <td>${udCell}</td>
+        <td>${scrCell}</td>
         <td>${r.putts}</td>
         <td>${r.penalties}</td>
         <td>${r.firHits}/${r.firOpps}</td>
@@ -1442,20 +1843,31 @@ function renderRoundsTable(rounds) {
 }
 
 function openRoundModal(roundId) {
-  const r = allRounds.find(x => x.id === roundId);
-  if (!r) return;
+  const raw = allRounds.find(x => x.id === roundId);
+  if (!raw) return;
+  const r = enrichRound(raw);
   document.getElementById('modalTitle').textContent = `${r.course} — ${r.date} (${r.tee} Tees)`;
-  const girCount = r.holes.filter(h => h.stdGir).length;
-  const missed = r.holes.filter(h => !h.stdGir && h.strokes !== null && h.strokes !== undefined);
-  const udMade = missed.filter(h => h.strokes <= h.par).length;
-  const penTotal = r.holes.reduce((s, h) => s + (Number(h.penalties) || 0), 0);
-  document.getElementById('modalSub').textContent = `Gross: ${r.gross} (+${r.gross - r.par}) | GIR: ${girCount}/${r.holesCount} | Up & Down: ${udMade}/${missed.length} | Putts: ${r.garminPutts ?? '—'} | Penalties: ${penTotal}`;
+  const udSummary = r.upDownAtt ? `${r.upDownMade}/${r.upDownAtt} (${r.upDownPct}%)` : 'n/a';
+  const scrSummary = r.scrambleAtt ? `${r.scrambleMade}/${r.scrambleAtt} (${r.scramblePct}%)` : 'n/a';
+  document.getElementById('modalSub').textContent =
+    `Gross: ${r.gross} (${formatSignedDiff(r.toPar, 0)}) | GIR: ${r.girCount}/${r.holesCount} | ` +
+    `Up & Down: ${udSummary} | Scramble: ${scrSummary} | Putts: ${r.garminPutts ?? r.putts} | Penalties: ${r.penalties}`;
 
   document.getElementById('modalTableBody').innerHTML = r.holes.map(h => {
     const diff = h.strokes - h.par;
     const label = diff <= -3 ? 'Albatross' : diff === -2 ? 'Eagle' : diff === -1 ? 'Birdie' : diff === 0 ? 'Par' : diff === 1 ? 'Bogey' : `+${diff}`;
     const pillClass = diff <= -2 ? 'pill-purple' : diff === -1 ? 'pill-blue' : diff === 0 ? 'pill-green' : diff === 1 ? 'pill-amber' : 'pill-rose';
-    const udText = h.stdGir ? '—' : (h.strokes !== null && h.strokes <= h.par ? '<span class="pill pill-green">✓ Saved</span>' : '✕');
+
+    let udText = 'n/a';
+    if (h.upAndDownAttempt) {
+      udText = h.upAndDownMade ? '<span class="pill pill-cyan">✓ Made</span>' : '✕';
+    }
+
+    let scrText = 'n/a';
+    if (h.scrambleAttempt) {
+      scrText = h.scrambleMade ? '<span class="pill pill-green">✓ Saved</span>' : '✕';
+    }
+
     return `
       <tr>
         <td><strong>${h.hole}</strong></td>
@@ -1468,6 +1880,7 @@ function openRoundModal(roundId) {
         <td>${h.putts ?? '—'}</td>
         <td>${h.stdGir ? '<span class="pill pill-green">✓</span>' : '✕'}</td>
         <td>${udText}</td>
+        <td>${scrText}</td>
         <td>${h.penalties || 0}</td>
       </tr>
     `;
@@ -1511,7 +1924,10 @@ function runCurrentSql() {
 }
 
 // --- Event Wiring ---
-document.getElementById('fitInput').addEventListener('change', e => handleFiles(e.target.files));
+document.getElementById('fitInput').addEventListener('change', e => {
+  handleFiles(e.target.files);
+  e.target.value = '';
+});
 
 const dropzone = document.getElementById('dropzone');
 dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
@@ -1522,8 +1938,39 @@ dropzone.addEventListener('drop', e => {
   handleFiles(e.dataTransfer.files);
 });
 
-['roundScopeFilter', 'courseFilter', 'dateFrom', 'dateTo', 'parFilter', 'firFilter'].forEach(id => {
+['roundScopeFilter', 'courseFilter', 'parFilter', 'firFilter'].forEach(id => {
   document.getElementById(id).addEventListener('change', refreshDashboard);
+});
+
+document.getElementById('dateFrom').addEventListener('change', () => {
+  saveDateFilters();
+  refreshDashboard();
+});
+
+document.getElementById('dateTo').addEventListener('change', () => {
+  document.getElementById('toTodayCheckbox').checked = false;
+  saveDateFilters();
+  refreshDashboard();
+});
+
+document.getElementById('toTodayCheckbox').addEventListener('change', e => {
+  if (e.target.checked) {
+    document.getElementById('dateTo').value = getTodayIsoDate();
+  }
+  saveDateFilters();
+  refreshDashboard();
+});
+
+// Collapsible Comparison Panel (closed by default on every load)
+document.getElementById('compareToggleBtn').addEventListener('click', () => {
+  const btn = document.getElementById('compareToggleBtn');
+  const body = document.getElementById('compareBody');
+  const chevron = document.getElementById('compareChevron');
+  const expanded = btn.getAttribute('aria-expanded') === 'true';
+  const nextState = !expanded;
+  btn.setAttribute('aria-expanded', String(nextState));
+  body.classList.toggle('open', nextState);
+  chevron.classList.toggle('open', nextState);
 });
 
 ['compareRoundSelect', 'compareBaselineSelect'].forEach(id => {
@@ -1542,20 +1989,24 @@ document.querySelectorAll('.preset-chip').forEach(btn => {
 });
 
 document.getElementById('resetDataBtn').addEventListener('click', () => {
-  if (confirm('Clear locally cached rounds on this device? (Cloud rounds in golfdata are untouched)')) {
+  if (confirm('Clear locally cached rounds on this device only? (Cloud rounds in GitHub are untouched)')) {
     allRounds = [];
+    safeStorageRemove(PENDING_KEY);
     saveData();
     populateCourseFilter();
     refreshDashboard();
-    updateStatus('<strong>Local Cache Cleared:</strong> 0 rounds locally.');
+    updateStatus('<strong>Local Cache Cleared:</strong> 0 rounds in local cache on this device.');
+    setPublicStatus('Local cache cleared on this device. Reload the page to load the published rounds again.');
   }
 });
+
+document.getElementById('replaceCloudBtn').addEventListener('click', replaceAllCloudDataWithLocal);
 
 document.getElementById('exportJsonBtn').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(allRounds, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `garmin_golf_scorecards_${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `garmin_golf_scorecards_${getTodayIsoDate()}.json`;
   a.click();
 });
 
@@ -1566,41 +2017,63 @@ document.getElementById('roundModal').addEventListener('click', e => {
   if (e.target.id === 'roundModal') document.getElementById('roundModal').classList.remove('open');
 });
 
-// Cloud Sync Modal Events
-document.getElementById('syncSettingsBtn').addEventListener('click', () => {
+// Owner & Cloud Sync Modal Events
+function openSyncModal() {
   const cfg = getSyncConfig();
   document.getElementById('syncRepoInput').value = cfg.repo;
   document.getElementById('syncTokenInput').value = cfg.token;
   document.getElementById('syncModal').classList.add('open');
-});
+}
+
+function repoMismatchNote(repoVal) {
+  const repo = (repoVal || '').trim();
+  if (!repo || /^OWNER\/REPO$/i.test(repo)) {
+    return ' Set the repository to the repo that serves this page (owner/repo).';
+  }
+  if (INFERRED_REPO && repo.toLowerCase() !== INFERRED_REPO.toLowerCase()) {
+    return ` Note: this page is served from ${INFERRED_REPO} but you are pushing to ${repo}. Visitors only see changes if both are the same repo.`;
+  }
+  return '';
+}
+
+document.getElementById('ownerLinkBtn').addEventListener('click', openSyncModal);
+document.getElementById('syncSettingsBtn').addEventListener('click', openSyncModal);
+
 document.getElementById('closeSyncModalBtn').addEventListener('click', () => {
   document.getElementById('syncModal').classList.remove('open');
 });
 document.getElementById('syncModal').addEventListener('click', e => {
   if (e.target.id === 'syncModal') document.getElementById('syncModal').classList.remove('open');
 });
-document.getElementById('saveAndSyncBtn').addEventListener('click', async () => {
-  saveSyncConfig(document.getElementById('syncRepoInput').value, document.getElementById('syncTokenInput').value);
-  await syncWithGitHub({ pushOnly: false, silent: false });
-});
-document.getElementById('forcePushBtn').addEventListener('click', async () => {
-  saveSyncConfig(document.getElementById('syncRepoInput').value, document.getElementById('syncTokenInput').value);
-  await syncWithGitHub({ pushOnly: true, silent: false });
+document.getElementById('saveAndSyncBtn').addEventListener('click', () => {
+  const repoVal = document.getElementById('syncRepoInput').value;
+  saveSyncConfig(repoVal, document.getElementById('syncTokenInput').value);
+  applyOwnerVisibility();
+  const hasToken = Boolean(getSyncConfig().token);
+  const note = repoMismatchNote(getSyncConfig().repo);
+  document.getElementById('syncModalStatus').textContent = (hasToken
+    ? '✓ Token saved locally on this device. Owner controls are now visible.'
+    : '✓ Settings saved without a token; owner controls remain hidden.') + note;
+  updateCloudStatus(
+    hasToken ? '☁️ <strong>Owner Mode Active:</strong> Token saved locally on this device.' : '☁️ <strong>Public Read-Only Mode.</strong>',
+    hasToken
+  );
 });
 document.getElementById('disconnectSyncBtn').addEventListener('click', () => {
-  localStorage.removeItem(SYNC_CFG_KEY);
+  safeStorageRemove(SYNC_CFG_KEY);
   document.getElementById('syncTokenInput').value = '';
-  document.getElementById('syncModalStatus').textContent = 'Disconnected from GitHub Cloud Sync on this device.';
-  updateCloudStatus('☁️ <strong>Cloud Sync:</strong> Disconnected.', false);
+  applyOwnerVisibility();
+  document.getElementById('syncModalStatus').textContent = 'Token removed from this device. Switched back to visitor read-only view.';
+  updateCloudStatus('☁️ <strong>Public Read-Only Mode.</strong>', false);
 });
 
-// Boot & Auto-Sync
+// Boot: apply owner mode, restore persisted date filters, render local cache immediately, then load latest rounds.json
+applyOwnerVisibility();
+loadDateFilters();
 loadInitialData();
 populateCourseFilter();
 refreshDashboard();
-if (getSyncConfig().token) {
-  syncWithGitHub({ pushOnly: false, silent: true });
-}
+loadPublicDataset({ silent: true });
 </script>
 </body>
 </html>
